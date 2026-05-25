@@ -1,5 +1,4 @@
 import base64
-from collections import deque
 import os
 import tempfile
 import time
@@ -201,53 +200,30 @@ def remove_flat_edge_background(image):
     if bg is None:
         return None
 
-    result = flood_remove_background(image, bg)
+    result = remove_matching_background(image, bg)
     return result if has_useful_alpha(result) else None
 
 
-def flood_remove_background(image, bg):
+def remove_matching_background(image, bg):
     width = image.width()
     height = image.height()
     result = image.copy()
     tolerance = 44
     feather = 56
-    visited = bytearray(width * height)
-    queue = deque()
 
-    def enqueue(x, y):
-        if x < 0 or y < 0 or x >= width or y >= height:
-            return
-        index = y * width + x
-        if visited[index]:
-            return
-        color = result.pixelColor(x, y)
-        if color_distance(color, bg) > tolerance + feather:
-            return
-        visited[index] = 1
-        queue.append((x, y))
-
-    for x in range(width):
-        enqueue(x, 0)
-        enqueue(x, height - 1)
     for y in range(height):
-        enqueue(0, y)
-        enqueue(width - 1, y)
+        for x in range(width):
+            color = result.pixelColor(x, y)
+            distance = color_distance(color, bg)
+            if distance > tolerance + feather:
+                continue
 
-    while queue:
-        x, y = queue.popleft()
-        color = result.pixelColor(x, y)
-        distance = color_distance(color, bg)
-        if distance <= tolerance:
-            color.setAlpha(0)
-        else:
-            alpha = int(255 * ((distance - tolerance) / float(feather)))
-            color.setAlpha(max(0, min(255, alpha)))
-        result.setPixelColor(x, y, color)
-
-        enqueue(x + 1, y)
-        enqueue(x - 1, y)
-        enqueue(x, y + 1)
-        enqueue(x, y - 1)
+            if distance <= tolerance:
+                color.setAlpha(0)
+            else:
+                alpha = int(255 * ((distance - tolerance) / float(feather)))
+                color.setAlpha(max(0, min(255, alpha)))
+            result.setPixelColor(x, y, color)
 
     return result
 
