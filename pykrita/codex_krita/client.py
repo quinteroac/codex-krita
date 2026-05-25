@@ -6,6 +6,11 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from .image_bridge import (
+    TRANSPARENCY_OPAQUE,
+    TRANSPARENCY_PRESERVE_ALPHA,
+    TRANSPARENCY_REMOVE_FLAT_BACKGROUND,
+)
 from .script_runner import validate_script_code
 from .setup import ensure_codex_runtime, ensure_vendor_sdk_on_path, find_codex_binary
 
@@ -51,6 +56,7 @@ class CodexDirectClient:
                 params["prompt"],
                 params.get("size", "1024x1024"),
                 params.get("quality", "medium"),
+                params.get("transparency_mode", TRANSPARENCY_OPAQUE),
             )
         if method == "edit_image":
             return self.edit_image(
@@ -126,7 +132,12 @@ class CodexDirectClient:
         if image_path:
             inputs.append(LocalImageInput(image_path))
         if mask_path:
-            inputs.append(TextInput("Mask image for the edit follows. Use it as the edit mask if supported."))
+            inputs.append(
+                TextInput(
+                    "Inpainting mask image follows. Transparent pixels are the selected editable area. "
+                    "Opaque pixels must be preserved from the base image."
+                )
+            )
             inputs.append(LocalImageInput(mask_path))
 
         with codex_context as codex:
@@ -162,12 +173,13 @@ class CodexDirectClient:
             result = self._run_turn_stream(thread, [TextInput(prompt), LocalImageInput(image_path)])
         return {"text": result.final_response}
 
-    def generate_image(self, prompt, size="1024x1024", quality="medium"):
+    def generate_image(self, prompt, size="1024x1024", quality="medium", transparency_mode=TRANSPARENCY_OPAQUE):
         size_instruction = (
             "Size: auto. Choose the most appropriate aspect ratio and dimensions for the request."
             if size == "auto"
             else "Target size: %s" % size
         )
+        transparency_instruction = self._generation_transparency_instruction(transparency_mode)
         codex_prompt = "\n".join(
             [
                 "Use Codex's image-generation capability for a Krita workflow.",
@@ -175,15 +187,24 @@ class CodexDirectClient:
                 prompt,
                 size_instruction,
                 "Quality: %s" % quality,
-                "Output format: PNG with alpha channel when transparency is useful.",
-                "For isolated subjects, stickers, assets, cutouts, characters, props, or icons, use a perfectly flat solid #00ff00 chroma-key background if native transparency is not available.",
-                "Do not use #00ff00 in the subject. No shadow, gradient, texture, floor plane, or lighting variation in the background.",
+                transparency_instruction,
                 "If you can create an image artifact, save it as a PNG file and return only JSON:",
                 '{"image_path": "/absolute/path/to/generated.png", "text": "short summary"}',
                 "If image artifacts are not available in this Codex runtime, return JSON with only a text field explaining the limitation.",
             ]
         )
         return self._parse_image_turn_result(self._run_codex_with_imagegen(codex_prompt))
+
+    def _generation_transparency_instruction(self, transparency_mode):
+        if transparency_mode == TRANSPARENCY_REMOVE_FLAT_BACKGROUND:
+            return (
+                "Output format: PNG. For isolated subjects, stickers, assets, cutouts, characters, props, or icons, "
+                "use a perfectly flat solid #00ff00 chroma-key background if native transparency is not available. "
+                "Do not use #00ff00 in the subject. No shadow, gradient, texture, floor plane, or lighting variation in the background."
+            )
+        if transparency_mode == TRANSPARENCY_PRESERVE_ALPHA:
+            return "Output format: PNG with alpha channel when transparency is useful. Do not use chroma-key backgrounds."
+        return "Output format: fully opaque PNG. Do not use transparency or chroma-key backgrounds."
 
     def edit_image(self, prompt, image_path, mask_path=None, size="1024x1024", quality="medium"):
         size_instruction = (
@@ -197,6 +218,8 @@ class CodexDirectClient:
                 "Base image file path: %s" % image_path,
                 "Mask image file path: %s" % (mask_path or "none"),
                 "Edit request: %s" % prompt,
+                "Use the mask as an inpainting mask: modify only transparent masked pixels and preserve opaque masked pixels from the base image.",
+                "Blend the edited selection naturally with the surrounding unchanged image.",
                 size_instruction,
                 "Quality: %s" % quality,
                 "Output format: PNG with alpha channel. Preserve existing transparency and keep removed or masked-out background areas transparent.",

@@ -12,7 +12,11 @@ from krita import DockWidget
 
 from .client import CodexDirectClient
 from .image_bridge import (
+    TRANSPARENCY_OPAQUE,
+    TRANSPARENCY_PRESERVE_ALPHA,
+    TRANSPARENCY_REMOVE_FLAT_BACKGROUND,
     attach_image_to_document,
+    clip_image_to_inpaint_mask,
     document_context,
     export_active_context,
     export_selection_mask,
@@ -68,9 +72,14 @@ class CodexDocker(DockWidget):
         )
         self.quality = QComboBox()
         self.quality.addItems(["medium", "high", "low"])
+        self.transparency = QComboBox()
+        self.transparency.addItem("Opaque", TRANSPARENCY_OPAQUE)
+        self.transparency.addItem("Preserve PNG alpha", TRANSPARENCY_PRESERVE_ALPHA)
+        self.transparency.addItem("Remove flat background", TRANSPARENCY_REMOVE_FLAT_BACKGROUND)
         form.addRow("Context", self.scope)
         form.addRow("Size", self.size)
         form.addRow("Quality", self.quality)
+        form.addRow("Transparency", self.transparency)
         layout.addLayout(form)
 
         self.prompt = QTextEdit()
@@ -134,6 +143,9 @@ class CodexDocker(DockWidget):
 
     def selected_size(self):
         return self.size.currentText().split(" ", 1)[0]
+
+    def selected_transparency_mode(self):
+        return self.transparency.currentData()
 
     def set_busy(self, busy):
         for button in (self.analyze_btn, self.generate_btn, self.edit_btn, self.script_btn, self.run_script_btn):
@@ -202,6 +214,7 @@ class CodexDocker(DockWidget):
                     "prompt": self.prompt_text(),
                     "size": self.selected_size(),
                     "quality": self.quality.currentText(),
+                    "transparency_mode": self.selected_transparency_mode(),
                 },
                 self._attach_generated_result,
             )
@@ -212,6 +225,8 @@ class CodexDocker(DockWidget):
         try:
             exported = export_active_context(self.scope.currentText())
             mask = export_selection_mask()
+            if mask is None:
+                raise RuntimeError("Select an area first. Edit Selection uses the selected area as the inpainting region.")
             self.call_worker(
                 "edit_image",
                 {
@@ -221,22 +236,39 @@ class CodexDocker(DockWidget):
                     "size": self.selected_size(),
                     "quality": self.quality.currentText(),
                 },
-                self._attach_generated_result,
+                lambda result: self._attach_edited_selection_result(result, mask["path"]),
             )
         except Exception as exc:
             self.append_log("Error: %s" % exc)
 
     def _attach_generated_result(self, result):
         if result.get("image_path"):
-            message = attach_image_to_document(result["image_path"])
+            message = attach_image_to_document(result["image_path"], self.selected_transparency_mode())
             self.append_log("%s\n%s" % (message, result["image_path"]))
             return
         if result.get("text"):
             self.append_log(result["text"])
             return
         path = write_result_image(result["image_b64"])
-        message = attach_image_to_document(path)
+        message = attach_image_to_document(path, self.selected_transparency_mode())
         self.append_log("%s\n%s" % (message, path))
+
+    def _attach_edited_selection_result(self, result, mask_path):
+        try:
+            if result.get("image_path"):
+                path = clip_image_to_inpaint_mask(result["image_path"], mask_path)
+                message = attach_image_to_document(path, TRANSPARENCY_PRESERVE_ALPHA)
+                self.append_log("%s\n%s" % (message, path))
+                return
+            if result.get("text") and not result.get("image_b64"):
+                self.append_log(result["text"])
+                return
+            path = write_result_image(result["image_b64"])
+            path = clip_image_to_inpaint_mask(path, mask_path)
+            message = attach_image_to_document(path, TRANSPARENCY_PRESERVE_ALPHA)
+            self.append_log("%s\n%s" % (message, path))
+        except Exception as exc:
+            self.append_log("Error: %s" % exc)
 
     def propose_script(self):
         try:

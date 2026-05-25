@@ -69,6 +69,11 @@ class OpenAIOps:
             mask_file = io.BytesIO(base64.b64decode(mask_b64))
             mask_file.name = "krita-mask.png"
             kwargs["mask"] = mask_file
+            kwargs["prompt"] = (
+                "Use the mask as an inpainting mask: edit only transparent masked pixels, "
+                "preserve opaque masked pixels from the source image, and blend naturally. "
+                + prompt
+            )
 
         response = self._client.images.edit(**kwargs)
         return {"image_b64": response.data[0].b64_json, "mime_type": "image/png"}

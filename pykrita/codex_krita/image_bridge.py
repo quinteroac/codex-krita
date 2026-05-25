@@ -8,6 +8,11 @@ from PyQt5.QtGui import QColor, QImage
 from krita import InfoObject, Krita
 
 
+TRANSPARENCY_OPAQUE = "opaque"
+TRANSPARENCY_PRESERVE_ALPHA = "preserve_alpha"
+TRANSPARENCY_REMOVE_FLAT_BACKGROUND = "remove_flat_background"
+
+
 def document_context():
     doc = Krita.instance().activeDocument()
     if doc is None:
@@ -62,8 +67,17 @@ def export_selection_mask():
     if data is None:
         return None
 
-    raw = bytes(data)
-    image = QImage(raw[: width * height], width, height, width, QImage.Format_Grayscale8)
+    raw = bytes(data)[: width * height]
+    if not raw or max(raw) == 0:
+        return None
+
+    image = QImage(width, height, QImage.Format_ARGB32)
+    for y in range(height):
+        row_offset = y * width
+        for x in range(width):
+            selected = raw[row_offset + x]
+            alpha = 255 - selected
+            image.setPixelColor(x, y, QColor(255, 255, 255, alpha))
 
     buffer = QBuffer()
     buffer.open(QIODevice.WriteOnly)
@@ -84,7 +98,37 @@ def write_result_image(image_b64):
     return path
 
 
-def attach_image_to_document(path):
+def clip_image_to_inpaint_mask(image_path, mask_path):
+    image = QImage(image_path)
+    mask = QImage(mask_path)
+    if image.isNull() or mask.isNull():
+        raise RuntimeError("Could not load the edited image or selection mask.")
+
+    image = image.convertToFormat(QImage.Format_ARGB32)
+    mask = mask.convertToFormat(QImage.Format_ARGB32)
+    if image.width() != mask.width() or image.height() != mask.height():
+        raise RuntimeError(
+            "Edited image size %sx%s does not match selection mask size %sx%s."
+            % (image.width(), image.height(), mask.width(), mask.height())
+        )
+
+    result = image.copy()
+    for y in range(result.height()):
+        for x in range(result.width()):
+            color = result.pixelColor(x, y)
+            editable = 255 - mask.pixelColor(x, y).alpha()
+            color.setAlpha(int(color.alpha() * (editable / 255.0)))
+            result.setPixelColor(x, y, color)
+
+    handle = tempfile.NamedTemporaryFile(prefix="krita-codex-inpaint-", suffix=".png", delete=False)
+    clipped_path = handle.name
+    handle.close()
+    result.save(clipped_path, "PNG")
+    return clipped_path
+
+
+def attach_image_to_document(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):
+    path = prepare_image_for_transparency_mode(path, transparency_mode)
     app = Krita.instance()
     doc = app.activeDocument()
     if doc is None:
@@ -93,7 +137,7 @@ def attach_image_to_document(path):
             app.activeWindow().addView(new_doc)
         return "Opened generated image as a new document."
 
-    paint_result = attach_image_as_transparent_paint_layer(doc, path)
+    paint_result = attach_image_as_transparent_paint_layer(doc, path, transparency_mode)
     if paint_result:
         return paint_result
 
@@ -110,8 +154,8 @@ def attach_image_to_document(path):
     return "Opened generated image as a new document; this Krita build did not expose createFileLayer()."
 
 
-def attach_image_as_transparent_paint_layer(doc, path):
-    image = load_image_with_transparency(path)
+def attach_image_as_transparent_paint_layer(doc, path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):
+    image = load_image_with_transparency(path, transparency_mode)
     if image.isNull():
         return None
 
@@ -158,19 +202,51 @@ def attach_image_as_transparent_paint_layer(doc, path):
     )
 
 
-def load_image_with_transparency(path):
+def prepare_image_for_transparency_mode(path, transparency_mode):
+    if transparency_mode == TRANSPARENCY_PRESERVE_ALPHA:
+        return path
+
+    image = load_image_with_transparency(path, transparency_mode)
+    if image.isNull():
+        return path
+
+    handle = tempfile.NamedTemporaryFile(prefix="krita-codex-import-", suffix=".png", delete=False)
+    prepared_path = handle.name
+    handle.close()
+    image.save(prepared_path, "PNG")
+    return prepared_path
+
+
+def load_image_with_transparency(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):
     image = QImage(path)
     if image.isNull():
         return image
 
     image = image.convertToFormat(QImage.Format_ARGB32)
+    if transparency_mode == TRANSPARENCY_OPAQUE:
+        return force_opaque(image)
+
+    if transparency_mode == TRANSPARENCY_PRESERVE_ALPHA:
+        return image
+
     if has_useful_alpha(image):
         return image
 
-    keyed = remove_flat_edge_background(image)
-    if keyed is not None:
-        return keyed
+    if transparency_mode == TRANSPARENCY_REMOVE_FLAT_BACKGROUND:
+        keyed = remove_flat_edge_background(image)
+        if keyed is not None:
+            return keyed
     return image
+
+
+def force_opaque(image):
+    result = image.copy()
+    for y in range(result.height()):
+        for x in range(result.width()):
+            color = result.pixelColor(x, y)
+            color.setAlpha(255)
+            result.setPixelColor(x, y, color)
+    return result
 
 
 def has_useful_alpha(image):
