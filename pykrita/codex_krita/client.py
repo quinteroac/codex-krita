@@ -58,6 +58,8 @@ class CodexDirectClient:
                 params.get("size", "1024x1024"),
                 params.get("quality", "medium"),
                 params.get("transparency_mode", TRANSPARENCY_OPAQUE),
+                params.get("image_path"),
+                params.get("context_scope"),
             )
         if method == "edit_image":
             return self.edit_image(
@@ -177,23 +179,50 @@ class CodexDirectClient:
             result = self._run_turn_stream(thread, [TextInput(prompt), LocalImageInput(image_path)])
         return {"text": result.final_response}
 
-    def generate_image(self, prompt, size="1024x1024", quality="medium", transparency_mode=TRANSPARENCY_OPAQUE):
+    def generate_image(
+        self,
+        prompt,
+        size="1024x1024",
+        quality="medium",
+        transparency_mode=TRANSPARENCY_OPAQUE,
+        image_path=None,
+        context_scope=None,
+    ):
         size_instruction = self._size_instruction(size, "active Krita document")
         transparency_instruction = self._generation_transparency_instruction(transparency_mode)
+        context_instruction = self._generation_context_instruction(context_scope) if image_path else None
         codex_prompt = "\n".join(
-            [
+            [line for line in [
                 "Use Codex's image-generation capability for a Krita workflow.",
                 "Create an image from this prompt:",
                 prompt,
+                context_instruction,
                 size_instruction,
                 "Quality: %s" % quality,
                 transparency_instruction,
                 "If you can create an image artifact, save it as a PNG file and return only JSON:",
                 '{"image_path": "/absolute/path/to/generated.png", "text": "short summary"}',
                 "If image artifacts are not available in this Codex runtime, return JSON with only a text field explaining the limitation.",
-            ]
+            ] if line]
         )
-        return self._parse_image_turn_result(self._run_codex_with_imagegen(codex_prompt))
+        return self._parse_image_turn_result(self._run_codex_with_imagegen(codex_prompt, image_path=image_path))
+
+    def _generation_context_instruction(self, context_scope):
+        if context_scope == "active_layer":
+            return (
+                "A Krita active-layer reference image is attached. Use it as visual context for subject, style, "
+                "composition, palette, lighting, and line/rendering language. Generate a new image that follows "
+                "the user prompt while staying coherent with that layer."
+            )
+        if context_scope == "selection":
+            return (
+                "A crop of the selected Krita area is attached. Use it as visual reference for the requested generation. "
+                "Respect its subject, style, palette, lighting, and composition cues unless the user explicitly asks to change them."
+            )
+        return (
+            "A Krita document reference image is attached. Use it as visual context for subject, style, composition, "
+            "palette, lighting, and perspective. Generate a new image that follows the user prompt while staying coherent with the document."
+        )
 
     def _generation_transparency_instruction(self, transparency_mode):
         if transparency_mode == TRANSPARENCY_REMOVE_FLAT_BACKGROUND:

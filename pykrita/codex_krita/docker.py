@@ -21,6 +21,7 @@ from .image_bridge import (
     clip_image_to_inpaint_mask,
     document_context,
     export_active_context,
+    export_generation_context,
     export_inpaint_blend_mask_for_rect,
     export_inpaint_job,
     write_result_image,
@@ -254,11 +255,16 @@ class CodexDocker(DockWidget):
     def generate(self):
         try:
             context = document_context()
+            exported = export_generation_context(self.scope.currentText()) if context.get("has_document") else None
+            width = exported.get("width") if exported else context.get("width")
+            height = exported.get("height") if exported else context.get("height")
             self.call_worker(
                 "generate_image",
                 {
                     "prompt": self.prompt_text(),
-                    "size": self.selected_size(context.get("width"), context.get("height")),
+                    "image_path": exported.get("path") if exported else None,
+                    "context_scope": self.scope.currentText() if exported else None,
+                    "size": self.selected_size(width, height),
                     "quality": self.quality.currentText(),
                     "transparency_mode": self.selected_transparency_mode(),
                 },

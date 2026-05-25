@@ -51,7 +51,29 @@ def export_active_context(scope):
     with open(path, "rb") as image_file:
         image_b64 = base64.b64encode(image_file.read()).decode("utf-8")
 
-    return {"path": path, "image_b64": image_b64, "mime_type": "image/png"}
+    image = QImage(path)
+    result = {"path": path, "image_b64": image_b64, "mime_type": "image/png"}
+    if not image.isNull():
+        result["width"] = image.width()
+        result["height"] = image.height()
+    return result
+
+
+def export_generation_context(scope):
+    if scope != "selection":
+        return export_active_context(scope)
+
+    selection = selection_pixels()
+    if selection is None:
+        raise RuntimeError("Select an area first or choose document/active_layer as context.")
+
+    width, height, raw = selection
+    bounds = selection_bounds(raw, width, height)
+    if bounds is None:
+        raise RuntimeError("Select an area first or choose document/active_layer as context.")
+
+    left, top, right, bottom = bounds
+    return export_active_context_crop("document", left, top, right - left + 1, bottom - top + 1)
 
 
 def export_active_context_crop(scope, x, y, width, height):
