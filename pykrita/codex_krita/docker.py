@@ -19,7 +19,7 @@ from .image_bridge import (
     clip_image_to_inpaint_mask,
     document_context,
     export_active_context,
-    export_selection_mask,
+    export_inpaint_masks,
     write_result_image,
 )
 from .script_runner import run_krita_script
@@ -76,10 +76,20 @@ class CodexDocker(DockWidget):
         self.transparency.addItem("Opaque", TRANSPARENCY_OPAQUE)
         self.transparency.addItem("Preserve PNG alpha", TRANSPARENCY_PRESERVE_ALPHA)
         self.transparency.addItem("Remove flat background", TRANSPARENCY_REMOVE_FLAT_BACKGROUND)
+        self.inpaint_padding = QComboBox()
+        for value in (0, 32, 64, 96):
+            self.inpaint_padding.addItem(str(value), value)
+        self.inpaint_padding.setCurrentIndex(2)
+        self.inpaint_feather = QComboBox()
+        for value in (0, 12, 24, 48):
+            self.inpaint_feather.addItem(str(value), value)
+        self.inpaint_feather.setCurrentIndex(2)
         form.addRow("Context", self.scope)
         form.addRow("Size", self.size)
         form.addRow("Quality", self.quality)
         form.addRow("Transparency", self.transparency)
+        form.addRow("Inpaint padding", self.inpaint_padding)
+        form.addRow("Blend feather", self.inpaint_feather)
         layout.addLayout(form)
 
         self.prompt = QTextEdit()
@@ -146,6 +156,12 @@ class CodexDocker(DockWidget):
 
     def selected_transparency_mode(self):
         return self.transparency.currentData()
+
+    def selected_inpaint_padding(self):
+        return self.inpaint_padding.currentData()
+
+    def selected_inpaint_feather(self):
+        return self.inpaint_feather.currentData()
 
     def set_busy(self, busy):
         for button in (self.analyze_btn, self.generate_btn, self.edit_btn, self.script_btn, self.run_script_btn):
@@ -224,19 +240,21 @@ class CodexDocker(DockWidget):
     def edit_selection(self):
         try:
             exported = export_active_context(self.scope.currentText())
-            mask = export_selection_mask()
-            if mask is None:
+            masks = export_inpaint_masks(self.selected_inpaint_padding(), self.selected_inpaint_feather())
+            if masks is None:
                 raise RuntimeError("Select an area first. Edit Selection uses the selected area as the inpainting region.")
             self.call_worker(
                 "edit_image",
                 {
                     "prompt": self.prompt_text(),
                     "image_path": exported["path"],
-                    "mask_path": mask["path"] if mask else None,
+                    "mask_path": masks["edit_mask_path"],
+                    "inpaint_padding": masks["padding"],
+                    "blend_feather": masks["feather"],
                     "size": self.selected_size(),
                     "quality": self.quality.currentText(),
                 },
-                lambda result: self._attach_edited_selection_result(result, mask["path"]),
+                lambda result: self._attach_edited_selection_result(result, masks["blend_mask_path"]),
             )
         except Exception as exc:
             self.append_log("Error: %s" % exc)

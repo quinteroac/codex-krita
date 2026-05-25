@@ -65,6 +65,8 @@ class CodexDirectClient:
                 params.get("mask_path"),
                 params.get("size", "1024x1024"),
                 params.get("quality", "medium"),
+                params.get("inpaint_padding", 0),
+                params.get("blend_feather", 0),
             )
         if method == "propose_script":
             return self.propose_script(
@@ -206,7 +208,16 @@ class CodexDirectClient:
             return "Output format: PNG with alpha channel when transparency is useful. Do not use chroma-key backgrounds."
         return "Output format: fully opaque PNG. Do not use transparency or chroma-key backgrounds."
 
-    def edit_image(self, prompt, image_path, mask_path=None, size="1024x1024", quality="medium"):
+    def edit_image(
+        self,
+        prompt,
+        image_path,
+        mask_path=None,
+        size="1024x1024",
+        quality="medium",
+        inpaint_padding=0,
+        blend_feather=0,
+    ):
         size_instruction = (
             "Size: auto. Preserve the source image aspect ratio unless the user asks otherwise."
             if size == "auto"
@@ -219,7 +230,9 @@ class CodexDirectClient:
                 "Mask image file path: %s" % (mask_path or "none"),
                 "Edit request: %s" % prompt,
                 "Use the mask as an inpainting mask: modify only transparent masked pixels and preserve opaque masked pixels from the base image.",
-                "Blend the edited selection naturally with the surrounding unchanged image.",
+                "The editable mask may include %s px of padding around the user's original selection so the edit can complete forms instead of cutting them off." % inpaint_padding,
+                "The final Krita layer will be composited with about %s px of feathering, so match lighting, color, texture, perspective, and edge continuity with the unchanged image." % blend_feather,
+                "Do not create a visibly separate pasted object. Avoid hard cutoffs at the original selection boundary.",
                 size_instruction,
                 "Quality: %s" % quality,
                 "Output format: PNG with alpha channel. Preserve existing transparency and keep removed or masked-out background areas transparent.",

@@ -2,6 +2,7 @@ import base64
 import os
 import tempfile
 import time
+from array import array
 
 from PyQt5.QtCore import QByteArray, QBuffer, QIODevice
 from PyQt5.QtGui import QColor, QImage
@@ -53,21 +54,11 @@ def export_active_context(scope):
 
 
 def export_selection_mask():
-    doc = Krita.instance().activeDocument()
-    if doc is None or not hasattr(doc, "selection"):
+    selection = selection_pixels()
+    if selection is None:
         return None
 
-    selection = doc.selection()
-    if selection is None or not hasattr(selection, "pixelData"):
-        return None
-
-    width = doc.width()
-    height = doc.height()
-    data = selection.pixelData(0, 0, width, height)
-    if data is None:
-        return None
-
-    raw = bytes(data)[: width * height]
+    width, height, raw = selection
     if not raw or max(raw) == 0:
         return None
 
@@ -90,6 +81,124 @@ def export_selection_mask():
     return {"path": path, "image_b64": encoded, "mime_type": "image/png"}
 
 
+def export_inpaint_masks(padding=64, feather=24):
+    selection = selection_pixels()
+    if selection is None:
+        return None
+
+    width, height, raw = selection
+    if not raw or max(raw) == 0:
+        return None
+
+    padding = max(0, int(padding))
+    feather = max(0, int(feather))
+    distances = distance_to_selection(raw, width, height, padding)
+    edit_image = QImage(width, height, QImage.Format_ARGB32)
+    blend_image = QImage(width, height, QImage.Format_ARGB32)
+
+    for y in range(height):
+        row_offset = y * width
+        for x in range(width):
+            index = row_offset + x
+            selected = raw[index]
+            distance = distances[index]
+            editable = 255 if distance <= padding else 0
+            edit_image.setPixelColor(x, y, QColor(255, 255, 255, 255 - editable))
+            blend_image.setPixelColor(x, y, QColor(255, 255, 255, blend_alpha(selected, distance, padding, feather)))
+
+    edit = save_temp_png(edit_image, "krita-codex-edit-mask-")
+    blend = save_temp_png(blend_image, "krita-codex-blend-mask-")
+    return {
+        "edit_mask_path": edit["path"],
+        "edit_mask_b64": edit["image_b64"],
+        "blend_mask_path": blend["path"],
+        "blend_mask_b64": blend["image_b64"],
+        "mime_type": "image/png",
+        "padding": padding,
+        "feather": feather,
+    }
+
+
+def selection_pixels():
+    doc = Krita.instance().activeDocument()
+    if doc is None or not hasattr(doc, "selection"):
+        return None
+
+    selection = doc.selection()
+    if selection is None or not hasattr(selection, "pixelData"):
+        return None
+
+    width = doc.width()
+    height = doc.height()
+    data = selection.pixelData(0, 0, width, height)
+    if data is None:
+        return None
+    return width, height, bytes(data)[: width * height]
+
+
+def distance_to_selection(raw, width, height, max_distance):
+    cap = min(65535, max(1, int(max_distance)) + 1)
+    total = width * height
+    distances = array("H", [cap]) * total
+    for index, selected in enumerate(raw):
+        if selected:
+            distances[index] = 0
+
+    for y in range(height):
+        row_offset = y * width
+        for x in range(width):
+            index = row_offset + x
+            current = distances[index]
+            if current == 0:
+                continue
+            if x > 0:
+                current = min(current, distances[index - 1] + 1)
+            if y > 0:
+                current = min(current, distances[index - width] + 1)
+            distances[index] = min(current, cap)
+
+    for y in range(height - 1, -1, -1):
+        row_offset = y * width
+        for x in range(width - 1, -1, -1):
+            index = row_offset + x
+            current = distances[index]
+            if current == 0:
+                continue
+            if x + 1 < width:
+                current = min(current, distances[index + 1] + 1)
+            if y + 1 < height:
+                current = min(current, distances[index + width] + 1)
+            distances[index] = min(current, cap)
+
+    return distances
+
+
+def blend_alpha(selected, distance, padding, feather):
+    if selected:
+        return selected
+    if padding <= 0 or distance > padding:
+        return 0
+    if feather <= 0:
+        return 255
+
+    solid_distance = max(0, padding - feather)
+    if distance <= solid_distance:
+        return 255
+    return max(0, min(255, int(255 * ((padding - distance) / float(feather)))))
+
+
+def save_temp_png(image, prefix):
+    buffer = QBuffer()
+    buffer.open(QIODevice.WriteOnly)
+    image.save(buffer, "PNG")
+    encoded = base64.b64encode(bytes(buffer.data())).decode("utf-8")
+    handle = tempfile.NamedTemporaryFile(prefix=prefix, suffix=".png", delete=False)
+    path = handle.name
+    handle.close()
+    image.save(path, "PNG")
+    return {"path": path, "image_b64": encoded, "mime_type": "image/png"}
+
+
 def write_result_image(image_b64):
     data = base64.b64decode(image_b64)
     path = os.path.join(tempfile.gettempdir(), "krita-codex-result-%d.png" % int(time.time()))
@@ -98,9 +207,9 @@ def write_result_image(image_b64):
     return path
 
 
-def clip_image_to_inpaint_mask(image_path, mask_path):
+def clip_image_to_inpaint_mask(image_path, blend_mask_path):
     image = QImage(image_path)
-    mask = QImage(mask_path)
+    mask = QImage(blend_mask_path)
     if image.isNull() or mask.isNull():
         raise RuntimeError("Could not load the edited image or selection mask.")
 
@@ -116,8 +225,8 @@ def clip_image_to_inpaint_mask(image_path, mask_path):
     for y in range(result.height()):
         for x in range(result.width()):
             color = result.pixelColor(x, y)
-            editable = 255 - mask.pixelColor(x, y).alpha()
-            color.setAlpha(int(color.alpha() * (editable / 255.0)))
+            blend = mask.pixelColor(x, y).alpha()
+            color.setAlpha(int(color.alpha() * (blend / 255.0)))
             result.setPixelColor(x, y, color)
 
     handle = tempfile.NamedTemporaryFile(prefix="krita-codex-inpaint-", suffix=".png", delete=False)
