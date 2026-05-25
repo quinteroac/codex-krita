@@ -62,23 +62,15 @@ def export_selection_mask():
     if not raw or max(raw) == 0:
         return None
 
-    image = QImage(width, height, QImage.Format_ARGB32)
-    for y in range(height):
-        row_offset = y * width
-        for x in range(width):
-            selected = raw[row_offset + x]
-            alpha = 255 - selected
-            image.setPixelColor(x, y, QColor(255, 255, 255, alpha))
+    pixels = bytearray(width * height * 4)
+    for index, selected in enumerate(raw):
+        offset = index * 4
+        pixels[offset] = 255
+        pixels[offset + 1] = 255
+        pixels[offset + 2] = 255
+        pixels[offset + 3] = 255 - selected
 
-    buffer = QBuffer()
-    buffer.open(QIODevice.WriteOnly)
-    image.save(buffer, "PNG")
-    encoded = base64.b64encode(bytes(buffer.data())).decode("utf-8")
-    handle = tempfile.NamedTemporaryFile(prefix="krita-codex-mask-", suffix=".png", delete=False)
-    path = handle.name
-    handle.close()
-    image.save(path, "PNG")
-    return {"path": path, "image_b64": encoded, "mime_type": "image/png"}
+    return save_temp_argb32(pixels, width, height, "krita-codex-mask-")
 
 
 def export_inpaint_masks(padding=64, feather=24):
@@ -93,21 +85,24 @@ def export_inpaint_masks(padding=64, feather=24):
     padding = max(0, int(padding))
     feather = max(0, int(feather))
     distances = distance_to_selection(raw, width, height, padding)
-    edit_image = QImage(width, height, QImage.Format_ARGB32)
-    blend_image = QImage(width, height, QImage.Format_ARGB32)
+    edit_pixels = bytearray(width * height * 4)
+    blend_pixels = bytearray(width * height * 4)
 
-    for y in range(height):
-        row_offset = y * width
-        for x in range(width):
-            index = row_offset + x
-            selected = raw[index]
-            distance = distances[index]
-            editable = 255 if distance <= padding else 0
-            edit_image.setPixelColor(x, y, QColor(255, 255, 255, 255 - editable))
-            blend_image.setPixelColor(x, y, QColor(255, 255, 255, blend_alpha(selected, distance, padding, feather)))
+    for index, selected in enumerate(raw):
+        distance = distances[index]
+        editable = 255 if distance <= padding else 0
+        offset = index * 4
+        edit_pixels[offset] = 255
+        edit_pixels[offset + 1] = 255
+        edit_pixels[offset + 2] = 255
+        edit_pixels[offset + 3] = 255 - editable
+        blend_pixels[offset] = 255
+        blend_pixels[offset + 1] = 255
+        blend_pixels[offset + 2] = 255
+        blend_pixels[offset + 3] = blend_alpha(selected, distance, padding, feather)
 
-    edit = save_temp_png(edit_image, "krita-codex-edit-mask-")
-    blend = save_temp_png(blend_image, "krita-codex-blend-mask-")
+    edit = save_temp_argb32(edit_pixels, width, height, "krita-codex-edit-mask-")
+    blend = save_temp_argb32(blend_pixels, width, height, "krita-codex-blend-mask-")
     return {
         "edit_mask_path": edit["path"],
         "edit_mask_b64": edit["image_b64"],
@@ -197,6 +192,12 @@ def save_temp_png(image, prefix):
     handle.close()
     image.save(path, "PNG")
     return {"path": path, "image_b64": encoded, "mime_type": "image/png"}
+
+
+def save_temp_argb32(pixels, width, height, prefix):
+    data = bytes(pixels)
+    image = QImage(data, width, height, width * 4, QImage.Format_ARGB32)
+    return save_temp_png(image, prefix)
 
 
 def write_result_image(image_b64):

@@ -1,4 +1,5 @@
 from PyQt5.QtWidgets import (
+    QApplication,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
@@ -34,6 +35,7 @@ class CodexDocker(DockWidget):
         self.client = CodexDirectClient()
         self.worker = None
         self.pending_script = None
+        self.last_inpaint_image_path = None
         self._build_ui()
 
     def canvasChanged(self, canvas):
@@ -101,9 +103,12 @@ class CodexDocker(DockWidget):
         self.analyze_btn = QPushButton("Analyze")
         self.generate_btn = QPushButton("Generate")
         self.edit_btn = QPushButton("Edit Selection")
+        self.reblend_btn = QPushButton("Reblend Last")
+        self.reblend_btn.setEnabled(False)
         button_row.addWidget(self.analyze_btn)
         button_row.addWidget(self.generate_btn)
         button_row.addWidget(self.edit_btn)
+        button_row.addWidget(self.reblend_btn)
         layout.addLayout(button_row)
 
         script_row = QHBoxLayout()
@@ -127,6 +132,7 @@ class CodexDocker(DockWidget):
         self.analyze_btn.clicked.connect(self.analyze)
         self.generate_btn.clicked.connect(self.generate)
         self.edit_btn.clicked.connect(self.edit_selection)
+        self.reblend_btn.clicked.connect(self.reblend_last_inpaint)
         self.script_btn.clicked.connect(self.propose_script)
         self.run_script_btn.clicked.connect(self.run_script)
         self.check_setup_btn.clicked.connect(self.check_setup)
@@ -164,9 +170,18 @@ class CodexDocker(DockWidget):
         return self.inpaint_feather.currentData()
 
     def set_busy(self, busy):
-        for button in (self.analyze_btn, self.generate_btn, self.edit_btn, self.script_btn, self.run_script_btn):
+        for button in (
+            self.analyze_btn,
+            self.generate_btn,
+            self.edit_btn,
+            self.reblend_btn,
+            self.script_btn,
+            self.run_script_btn,
+        ):
             if button is self.run_script_btn:
                 button.setEnabled((not busy) and self.pending_script is not None)
+            elif button is self.reblend_btn:
+                button.setEnabled((not busy) and self.last_inpaint_image_path is not None)
             else:
                 button.setEnabled(not busy)
         self.status.setText("Working..." if busy else "Ready")
@@ -239,14 +254,17 @@ class CodexDocker(DockWidget):
 
     def edit_selection(self):
         try:
-            exported = export_active_context(self.scope.currentText())
+            prompt = self.prompt_text()
+            self.set_busy(True)
+            QApplication.processEvents()
             masks = export_inpaint_masks(self.selected_inpaint_padding(), self.selected_inpaint_feather())
             if masks is None:
                 raise RuntimeError("Select an area first. Edit Selection uses the selected area as the inpainting region.")
+            exported = export_active_context(self.scope.currentText())
             self.call_worker(
                 "edit_image",
                 {
-                    "prompt": self.prompt_text(),
+                    "prompt": prompt,
                     "image_path": exported["path"],
                     "mask_path": masks["edit_mask_path"],
                     "inpaint_padding": masks["padding"],
@@ -256,6 +274,18 @@ class CodexDocker(DockWidget):
                 },
                 lambda result: self._attach_edited_selection_result(result, masks["blend_mask_path"]),
             )
+        except Exception as exc:
+            self.set_busy(False)
+            self.append_log("Error: %s" % exc)
+
+    def reblend_last_inpaint(self):
+        try:
+            if not self.last_inpaint_image_path:
+                raise RuntimeError("No previous inpainting result to reblend.")
+            masks = export_inpaint_masks(self.selected_inpaint_padding(), self.selected_inpaint_feather())
+            if masks is None:
+                raise RuntimeError("Select an area first. Reblend Last uses the current selection and blend controls.")
+            self._attach_inpaint_path(self.last_inpaint_image_path, masks["blend_mask_path"])
         except Exception as exc:
             self.append_log("Error: %s" % exc)
 
@@ -274,19 +304,23 @@ class CodexDocker(DockWidget):
     def _attach_edited_selection_result(self, result, mask_path):
         try:
             if result.get("image_path"):
-                path = clip_image_to_inpaint_mask(result["image_path"], mask_path)
-                message = attach_image_to_document(path, TRANSPARENCY_PRESERVE_ALPHA)
-                self.append_log("%s\n%s" % (message, path))
+                self.last_inpaint_image_path = result["image_path"]
+                self._attach_inpaint_path(result["image_path"], mask_path)
                 return
             if result.get("text") and not result.get("image_b64"):
                 self.append_log(result["text"])
                 return
             path = write_result_image(result["image_b64"])
-            path = clip_image_to_inpaint_mask(path, mask_path)
-            message = attach_image_to_document(path, TRANSPARENCY_PRESERVE_ALPHA)
-            self.append_log("%s\n%s" % (message, path))
+            self.last_inpaint_image_path = path
+            self._attach_inpaint_path(path, mask_path)
         except Exception as exc:
             self.append_log("Error: %s" % exc)
+
+    def _attach_inpaint_path(self, image_path, mask_path):
+        path = clip_image_to_inpaint_mask(image_path, mask_path)
+        message = attach_image_to_document(path, TRANSPARENCY_PRESERVE_ALPHA)
+        self.reblend_btn.setEnabled(True)
+        self.append_log("%s\n%s" % (message, path))
 
     def propose_script(self):
         try:

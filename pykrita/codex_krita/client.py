@@ -137,7 +137,8 @@ class CodexDirectClient:
             inputs.append(
                 TextInput(
                     "Inpainting mask image follows. Transparent pixels are the selected editable area. "
-                    "Opaque pixels must be preserved from the base image."
+                    "Opaque pixels must be preserved from the base image. Use this attached image as visual mask input only; "
+                    "do not inspect, transform, or postprocess the mask file with shell commands."
                 )
             )
             inputs.append(LocalImageInput(mask_path))
@@ -226,18 +227,20 @@ class CodexDirectClient:
         codex_prompt = "\n".join(
             [
                 "Use Codex's image-editing capability for a Krita workflow.",
-                "Base image file path: %s" % image_path,
-                "Mask image file path: %s" % (mask_path or "none"),
+                "Use only the attached base image and attached mask image as image inputs.",
+                "Do not run shell commands, inspect local files, read image metadata manually, invoke external tools, or do PNG postprocessing.",
+                "Krita will handle mask clipping, alpha feathering, and final layer composition after you return the edited image artifact.",
                 "Edit request: %s" % prompt,
                 "Use the mask as an inpainting mask: modify only transparent masked pixels and preserve opaque masked pixels from the base image.",
                 "The editable mask may include %s px of padding around the user's original selection so the edit can complete forms instead of cutting them off." % inpaint_padding,
-                "The final Krita layer will be composited with about %s px of feathering, so match lighting, color, texture, perspective, and edge continuity with the unchanged image." % blend_feather,
+                "Krita will composite the returned image with about %s px of feathering, so match lighting, color, texture, perspective, and edge continuity with the unchanged image." % blend_feather,
                 "Do not create a visibly separate pasted object. Avoid hard cutoffs at the original selection boundary.",
                 size_instruction,
                 "Quality: %s" % quality,
-                "Output format: PNG with alpha channel. Preserve existing transparency and keep removed or masked-out background areas transparent.",
-                "If you can create an edited image artifact, save it as a PNG file and return only JSON:",
+                "Output format: PNG image artifact. Return the full edited image; do not pre-clip it to the mask.",
+                "If the runtime naturally exposes an absolute PNG path, include it in JSON. Do not run commands to find or create that path.",
                 '{"image_path": "/absolute/path/to/edited.png", "text": "short summary"}',
+                "If an image artifact exists but no path is exposed to you, return JSON with only a text field; the Krita plugin will read the image artifact from the SDK event stream.",
                 "If image artifacts are not available in this Codex runtime, return JSON with only a text field explaining the limitation.",
             ]
         )
