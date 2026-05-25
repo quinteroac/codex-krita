@@ -227,7 +227,7 @@ class CodexDirectClient:
         codex_prompt = "\n".join(
             [
                 "Use Codex's image-editing capability for a Krita workflow.",
-                "Use only the attached base image and attached mask image as image inputs.",
+                "Use only the attached base image crop and attached mask image as image inputs.",
                 "Do not run shell commands, inspect local files, read image metadata manually, invoke external tools, or do PNG postprocessing.",
                 "Krita will handle mask clipping, alpha feathering, and final layer composition after you return the edited image artifact.",
                 "Edit request: %s" % prompt,
@@ -237,7 +237,7 @@ class CodexDirectClient:
                 "Do not create a visibly separate pasted object. Avoid hard cutoffs at the original selection boundary.",
                 size_instruction,
                 "Quality: %s" % quality,
-                "Output format: PNG image artifact. Return the full edited image; do not pre-clip it to the mask.",
+                "Output format: PNG image artifact matching the attached crop. Return the full edited crop; do not pre-clip it to the mask.",
                 "If the runtime naturally exposes an absolute PNG path, include it in JSON. Do not run commands to find or create that path.",
                 '{"image_path": "/absolute/path/to/edited.png", "text": "short summary"}',
                 "If an image artifact exists but no path is exposed to you, return JSON with only a text field; the Krita plugin will read the image artifact from the SDK event stream.",

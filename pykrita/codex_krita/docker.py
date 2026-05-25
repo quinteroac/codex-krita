@@ -16,11 +16,13 @@ from .image_bridge import (
     TRANSPARENCY_OPAQUE,
     TRANSPARENCY_PRESERVE_ALPHA,
     TRANSPARENCY_REMOVE_FLAT_BACKGROUND,
+    attach_image_patch_to_document,
     attach_image_to_document,
     clip_image_to_inpaint_mask,
     document_context,
     export_active_context,
-    export_inpaint_masks,
+    export_inpaint_blend_mask_for_rect,
+    export_inpaint_job,
     write_result_image,
 )
 from .script_runner import run_krita_script
@@ -36,6 +38,8 @@ class CodexDocker(DockWidget):
         self.worker = None
         self.pending_script = None
         self.last_inpaint_image_path = None
+        self.last_inpaint_base_crop_path = None
+        self.last_inpaint_crop_rect = None
         self._build_ui()
 
     def canvasChanged(self, canvas):
@@ -86,12 +90,16 @@ class CodexDocker(DockWidget):
         for value in (0, 12, 24, 48):
             self.inpaint_feather.addItem(str(value), value)
         self.inpaint_feather.setCurrentIndex(2)
+        self.color_match = QComboBox()
+        self.color_match.addItem("On", True)
+        self.color_match.addItem("Off", False)
         form.addRow("Context", self.scope)
         form.addRow("Size", self.size)
         form.addRow("Quality", self.quality)
         form.addRow("Transparency", self.transparency)
         form.addRow("Inpaint padding", self.inpaint_padding)
         form.addRow("Blend feather", self.inpaint_feather)
+        form.addRow("Color match", self.color_match)
         layout.addLayout(form)
 
         self.prompt = QTextEdit()
@@ -168,6 +176,9 @@ class CodexDocker(DockWidget):
 
     def selected_inpaint_feather(self):
         return self.inpaint_feather.currentData()
+
+    def selected_color_match(self):
+        return self.color_match.currentData()
 
     def set_busy(self, busy):
         for button in (
@@ -257,22 +268,25 @@ class CodexDocker(DockWidget):
             prompt = self.prompt_text()
             self.set_busy(True)
             QApplication.processEvents()
-            masks = export_inpaint_masks(self.selected_inpaint_padding(), self.selected_inpaint_feather())
-            if masks is None:
+            job = export_inpaint_job(
+                self.scope.currentText(),
+                self.selected_inpaint_padding(),
+                self.selected_inpaint_feather(),
+            )
+            if job is None:
                 raise RuntimeError("Select an area first. Edit Selection uses the selected area as the inpainting region.")
-            exported = export_active_context(self.scope.currentText())
             self.call_worker(
                 "edit_image",
                 {
                     "prompt": prompt,
-                    "image_path": exported["path"],
-                    "mask_path": masks["edit_mask_path"],
-                    "inpaint_padding": masks["padding"],
-                    "blend_feather": masks["feather"],
+                    "image_path": job["image_path"],
+                    "mask_path": job["edit_mask_path"],
+                    "inpaint_padding": job["padding"],
+                    "blend_feather": job["feather"],
                     "size": self.selected_size(),
                     "quality": self.quality.currentText(),
                 },
-                lambda result: self._attach_edited_selection_result(result, masks["blend_mask_path"]),
+                lambda result: self._attach_edited_selection_result(result, job),
             )
         except Exception as exc:
             self.set_busy(False)
@@ -282,10 +296,26 @@ class CodexDocker(DockWidget):
         try:
             if not self.last_inpaint_image_path:
                 raise RuntimeError("No previous inpainting result to reblend.")
-            masks = export_inpaint_masks(self.selected_inpaint_padding(), self.selected_inpaint_feather())
+            if not self.last_inpaint_crop_rect:
+                raise RuntimeError("No previous inpainting crop metadata to reblend.")
+            x, y, width, height = self.last_inpaint_crop_rect
+            masks = export_inpaint_blend_mask_for_rect(
+                x,
+                y,
+                width,
+                height,
+                self.selected_inpaint_padding(),
+                self.selected_inpaint_feather(),
+            )
             if masks is None:
                 raise RuntimeError("Select an area first. Reblend Last uses the current selection and blend controls.")
-            self._attach_inpaint_path(self.last_inpaint_image_path, masks["blend_mask_path"])
+            self._attach_inpaint_path(
+                self.last_inpaint_image_path,
+                masks["blend_mask_path"],
+                x,
+                y,
+                self.last_inpaint_base_crop_path,
+            )
         except Exception as exc:
             self.append_log("Error: %s" % exc)
 
@@ -301,24 +331,41 @@ class CodexDocker(DockWidget):
         message = attach_image_to_document(path, self.selected_transparency_mode())
         self.append_log("%s\n%s" % (message, path))
 
-    def _attach_edited_selection_result(self, result, mask_path):
+    def _attach_edited_selection_result(self, result, job):
         try:
             if result.get("image_path"):
                 self.last_inpaint_image_path = result["image_path"]
-                self._attach_inpaint_path(result["image_path"], mask_path)
+                self._store_inpaint_job(job)
+                self._attach_inpaint_path(
+                    result["image_path"],
+                    job["blend_mask_path"],
+                    job["x"],
+                    job["y"],
+                    job["base_crop_path"],
+                )
                 return
             if result.get("text") and not result.get("image_b64"):
                 self.append_log(result["text"])
                 return
             path = write_result_image(result["image_b64"])
             self.last_inpaint_image_path = path
-            self._attach_inpaint_path(path, mask_path)
+            self._store_inpaint_job(job)
+            self._attach_inpaint_path(path, job["blend_mask_path"], job["x"], job["y"], job["base_crop_path"])
         except Exception as exc:
             self.append_log("Error: %s" % exc)
 
-    def _attach_inpaint_path(self, image_path, mask_path):
-        path = clip_image_to_inpaint_mask(image_path, mask_path)
-        message = attach_image_to_document(path, TRANSPARENCY_PRESERVE_ALPHA)
+    def _store_inpaint_job(self, job):
+        self.last_inpaint_base_crop_path = job["base_crop_path"]
+        self.last_inpaint_crop_rect = (job["x"], job["y"], job["width"], job["height"])
+
+    def _attach_inpaint_path(self, image_path, mask_path, x, y, base_crop_path):
+        path = clip_image_to_inpaint_mask(
+            image_path,
+            mask_path,
+            base_path=base_crop_path,
+            color_match=self.selected_color_match(),
+        )
+        message = attach_image_patch_to_document(path, x, y, TRANSPARENCY_PRESERVE_ALPHA)
         self.reblend_btn.setEnabled(True)
         self.append_log("%s\n%s" % (message, path))
 
