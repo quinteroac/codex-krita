@@ -1,6 +1,7 @@
 import base64
 import binascii
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -177,11 +178,7 @@ class CodexDirectClient:
         return {"text": result.final_response}
 
     def generate_image(self, prompt, size="1024x1024", quality="medium", transparency_mode=TRANSPARENCY_OPAQUE):
-        size_instruction = (
-            "Size: auto. Choose the most appropriate aspect ratio and dimensions for the request."
-            if size == "auto"
-            else "Target size: %s" % size
-        )
+        size_instruction = self._size_instruction(size, "active Krita document")
         transparency_instruction = self._generation_transparency_instruction(transparency_mode)
         codex_prompt = "\n".join(
             [
@@ -219,11 +216,7 @@ class CodexDirectClient:
         inpaint_padding=0,
         blend_feather=0,
     ):
-        size_instruction = (
-            "Size: auto. Preserve the source image aspect ratio unless the user asks otherwise."
-            if size == "auto"
-            else "Target size: %s" % size
-        )
+        size_instruction = self._size_instruction(size, "attached base image crop")
         codex_prompt = "\n".join(
             [
                 "Use Codex's image-editing capability for a Krita workflow.",
@@ -247,6 +240,31 @@ class CodexDirectClient:
         return self._parse_image_turn_result(
             self._run_codex_with_imagegen(codex_prompt, image_path=image_path, mask_path=mask_path)
         )
+
+    def _size_instruction(self, size, source_name):
+        if isinstance(size, str) and size.startswith("auto:"):
+            dimensions = size.split(":", 1)[1]
+            try:
+                width_text, height_text = dimensions.lower().split("x", 1)
+                width = int(width_text)
+                height = int(height_text)
+                if width > 0 and height > 0:
+                    divisor = math.gcd(width, height)
+                    return (
+                        "Size: auto, but preserve the %s aspect ratio: %sx%s (%s:%s). "
+                        "Choose generated dimensions that match this ratio as closely as possible unless the user explicitly asks otherwise."
+                        % (source_name, width, height, width // divisor, height // divisor)
+                    )
+            except Exception:
+                pass
+            return (
+                "Size: auto, but preserve the %s aspect ratio from %s. "
+                "Choose generated dimensions that match it as closely as possible unless the user explicitly asks otherwise."
+                % (source_name, dimensions)
+            )
+        if size == "auto":
+            return "Size: auto. Choose the most appropriate aspect ratio and dimensions for the request."
+        return "Target size: %s" % size
 
     def propose_script(self, task, document_context):
         prompt = json.dumps(

@@ -165,8 +165,11 @@ class CodexDocker(DockWidget):
             raise RuntimeError("Prompt is empty.")
         return text
 
-    def selected_size(self):
-        return self.size.currentText().split(" ", 1)[0]
+    def selected_size(self, width=None, height=None):
+        value = self.size.currentText().split(" ", 1)[0]
+        if value != "auto" or not width or not height:
+            return value
+        return "auto:%sx%s" % (int(width), int(height))
 
     def selected_transparency_mode(self):
         return self.transparency.currentData()
@@ -250,11 +253,12 @@ class CodexDocker(DockWidget):
 
     def generate(self):
         try:
+            context = document_context()
             self.call_worker(
                 "generate_image",
                 {
                     "prompt": self.prompt_text(),
-                    "size": self.selected_size(),
+                    "size": self.selected_size(context.get("width"), context.get("height")),
                     "quality": self.quality.currentText(),
                     "transparency_mode": self.selected_transparency_mode(),
                 },
@@ -283,7 +287,7 @@ class CodexDocker(DockWidget):
                     "mask_path": job["edit_mask_path"],
                     "inpaint_padding": job["padding"],
                     "blend_feather": job["feather"],
-                    "size": self.selected_size(),
+                    "size": self.selected_size(job["width"], job["height"]),
                     "quality": self.quality.currentText(),
                 },
                 lambda result: self._attach_edited_selection_result(result, job),
