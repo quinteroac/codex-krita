@@ -345,7 +345,7 @@ def distance_to_selection(raw, width, height, max_distance):
 
 def blend_alpha(selected, distance, padding, feather):
     if selected:
-        return selected
+        return 255
     if padding <= 0 or distance > padding:
         return 0
     if feather <= 0:
