@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -51,6 +52,9 @@ class ReferenceBoardDocker(DockWidget):
 
     def _build_ui(self):
         root = QWidget()
+        root.setMinimumSize(0, 0)
+        root.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+        self.setMinimumSize(0, 0)
         layout = QVBoxLayout(root)
 
         size_row = QHBoxLayout()
@@ -67,6 +71,8 @@ class ReferenceBoardDocker(DockWidget):
         self.list_widget.setResizeMode(QListWidget.Adjust)
         self.list_widget.setMovement(QListWidget.Static)
         self.list_widget.setIconSize(QSize(self.size_slider.value(), self.size_slider.value()))
+        self.list_widget.setMinimumSize(0, 0)
+        self.list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.list_widget.setSpacing(8)
         layout.addWidget(self.list_widget)
 

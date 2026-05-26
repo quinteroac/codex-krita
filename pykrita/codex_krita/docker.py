@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -50,6 +51,9 @@ class CodexDocker(DockWidget):
 
     def _build_ui(self):
         root = QWidget()
+        root.setMinimumSize(0, 0)
+        root.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+        self.setMinimumSize(0, 0)
         layout = QVBoxLayout(root)
 
         self.status = QLabel("Direct Codex mode: using the local Codex SDK from Krita's Python.")
@@ -112,7 +116,8 @@ class CodexDocker(DockWidget):
 
         self.prompt = QTextEdit()
         self.prompt.setPlaceholderText("Ask Codex to analyze, generate, edit, or script something for this artwork.")
-        self.prompt.setMinimumHeight(110)
+        self.prompt.setMinimumHeight(48)
+        self.prompt.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         layout.addWidget(self.prompt)
 
         button_row = QHBoxLayout()
@@ -137,12 +142,14 @@ class CodexDocker(DockWidget):
 
         self.script_preview = QTextEdit()
         self.script_preview.setPlaceholderText("Generated Krita Python script appears here.")
-        self.script_preview.setMinimumHeight(140)
+        self.script_preview.setMinimumHeight(48)
+        self.script_preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         layout.addWidget(self.script_preview)
 
         self.log = QTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(180)
+        self.log.setMinimumHeight(48)
+        self.log.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         layout.addWidget(self.log)
 
         self.analyze_btn.clicked.connect(self.analyze)
