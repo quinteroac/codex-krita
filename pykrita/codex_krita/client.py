@@ -200,9 +200,11 @@ class CodexDirectClient:
                 size_instruction,
                 "Quality: %s" % quality,
                 transparency_instruction,
-                "If you can create an image artifact, save it as a PNG file and return only JSON:",
+                "Always create an image artifact. Do not stop with a text-only answer just because a filesystem path is unavailable.",
+                "If the runtime exposes a saved PNG path, return only JSON:",
                 '{"image_path": "/absolute/path/to/generated.png", "text": "short summary"}',
-                "If image artifacts are not available in this Codex runtime, return JSON with only a text field explaining the limitation.",
+                "If an image artifact exists but no filesystem path is exposed, return JSON with only a text field. The Krita plugin will read the image artifact from the SDK event stream.",
+                "If image artifacts are not available at all, return JSON with only a text field explaining the limitation.",
             ] if line]
         )
         return self._parse_image_turn_result(self._run_codex_with_imagegen(codex_prompt, image_path=image_path))

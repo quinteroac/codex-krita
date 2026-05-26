@@ -506,12 +506,63 @@ def attach_image_to_document(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA
     return "Opened generated image as a new document; this Krita build did not expose createFileLayer()."
 
 
+def attach_image_to_active_layer(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA, offset_x=0, offset_y=0):
+    path = prepare_image_for_transparency_mode(path, transparency_mode)
+    app = Krita.instance()
+    doc = app.activeDocument()
+    if doc is None:
+        return attach_image_to_document(path, transparency_mode)
+
+    node = doc.activeNode()
+    if node is None or not hasattr(node, "setPixelData"):
+        return attach_image_to_document(path, transparency_mode)
+    if doc.colorModel() != "RGBA" or doc.colorDepth() != "U8":
+        return attach_image_to_document(path, transparency_mode)
+
+    packed = pack_image_for_krita(path, transparency_mode)
+    if packed is None:
+        return attach_image_to_document(path, transparency_mode)
+
+    ok = node.setPixelData(QByteArray(bytes(packed["pixels"])), int(offset_x), int(offset_y), packed["width"], packed["height"])
+    doc.refreshProjection()
+    if not ok:
+        return attach_image_to_document(path, transparency_mode)
+    return (
+        "Added generated image to the active layer "
+        "(transparent=%s, semi=%s)." % (packed["transparent"], packed["semi_transparent"])
+    )
+
+
 def attach_image_as_transparent_paint_layer(doc, path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA, offset_x=0, offset_y=0):
-    image = load_image_with_transparency(path, transparency_mode)
-    if image.isNull():
+    packed = pack_image_for_krita(path, transparency_mode)
+    if packed is None:
         return None
 
     if doc.colorModel() != "RGBA" or doc.colorDepth() != "U8":
+        return None
+
+    layer = doc.createNode("Codex - generated", "paintlayer")
+    layer.setOpacity(255)
+    doc.rootNode().addChildNode(layer, None)
+    ok = layer.setPixelData(
+        QByteArray(bytes(packed["pixels"])),
+        int(offset_x),
+        int(offset_y),
+        packed["width"],
+        packed["height"],
+    )
+    doc.refreshProjection()
+    if not ok:
+        return None
+    return (
+        "Added generated image as a transparent paint layer "
+        "(transparent=%s, semi=%s)." % (packed["transparent"], packed["semi_transparent"])
+    )
+
+
+def pack_image_for_krita(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):
+    image = load_image_with_transparency(path, transparency_mode)
+    if image.isNull():
         return None
 
     image = image.convertToFormat(QImage.Format_ARGB32)
@@ -541,17 +592,13 @@ def attach_image_as_transparent_paint_layer(doc, path, transparency_mode=TRANSPA
             packed[offset + 2] = color.red()
             packed[offset + 3] = alpha
 
-    layer = doc.createNode("Codex - generated", "paintlayer")
-    layer.setOpacity(255)
-    doc.rootNode().addChildNode(layer, None)
-    ok = layer.setPixelData(QByteArray(bytes(packed)), int(offset_x), int(offset_y), width, height)
-    doc.refreshProjection()
-    if not ok:
-        return None
-    return (
-        "Added generated image as a transparent paint layer "
-        "(transparent=%s, semi=%s)." % (transparent_pixels, semi_transparent_pixels)
-    )
+    return {
+        "pixels": packed,
+        "width": width,
+        "height": height,
+        "transparent": transparent_pixels,
+        "semi_transparent": semi_transparent_pixels,
+    }
 
 
 def prepare_image_for_transparency_mode(path, transparency_mode):

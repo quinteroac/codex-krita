@@ -16,6 +16,7 @@ from .image_bridge import (
     TRANSPARENCY_OPAQUE,
     TRANSPARENCY_PRESERVE_ALPHA,
     TRANSPARENCY_REMOVE_FLAT_BACKGROUND,
+    attach_image_to_active_layer,
     attach_image_patch_to_document,
     attach_image_to_document,
     clip_image_to_inpaint_mask,
@@ -26,6 +27,7 @@ from .image_bridge import (
     export_inpaint_job,
     write_result_image,
 )
+from .reference_board import add_reference_image
 from .script_runner import run_krita_script
 from .setup import diagnostics, save_detected_config, setup_status_text
 from .worker import RpcWorker
@@ -83,6 +85,10 @@ class CodexDocker(DockWidget):
         self.transparency.addItem("Opaque", TRANSPARENCY_OPAQUE)
         self.transparency.addItem("Preserve PNG alpha", TRANSPARENCY_PRESERVE_ALPHA)
         self.transparency.addItem("Remove flat background", TRANSPARENCY_REMOVE_FLAT_BACKGROUND)
+        self.output_destination = QComboBox()
+        self.output_destination.addItem("New layer", "new_layer")
+        self.output_destination.addItem("Active layer", "active_layer")
+        self.output_destination.addItem("Reference panel", "reference_panel")
         self.inpaint_padding = QComboBox()
         for value in (0, 32, 64, 96):
             self.inpaint_padding.addItem(str(value), value)
@@ -98,6 +104,7 @@ class CodexDocker(DockWidget):
         form.addRow("Size", self.size)
         form.addRow("Quality", self.quality)
         form.addRow("Transparency", self.transparency)
+        form.addRow("Generate output", self.output_destination)
         form.addRow("Inpaint padding", self.inpaint_padding)
         form.addRow("Blend feather", self.inpaint_feather)
         form.addRow("Color match", self.color_match)
@@ -174,6 +181,9 @@ class CodexDocker(DockWidget):
 
     def selected_transparency_mode(self):
         return self.transparency.currentData()
+
+    def selected_output_destination(self):
+        return self.output_destination.currentData()
 
     def selected_inpaint_padding(self):
         return self.inpaint_padding.currentData()
@@ -331,14 +341,22 @@ class CodexDocker(DockWidget):
 
     def _attach_generated_result(self, result):
         if result.get("image_path"):
-            message = attach_image_to_document(result["image_path"], self.selected_transparency_mode())
-            self.append_log("%s\n%s" % (message, result["image_path"]))
+            self._place_generated_path(result["image_path"], result.get("text"))
             return
         if result.get("text"):
             self.append_log(result["text"])
             return
         path = write_result_image(result["image_b64"])
-        message = attach_image_to_document(path, self.selected_transparency_mode())
+        self._place_generated_path(path, result.get("text"))
+
+    def _place_generated_path(self, path, title=None):
+        destination = self.selected_output_destination()
+        if destination == "reference_panel":
+            message = add_reference_image(path, title)
+        elif destination == "active_layer":
+            message = attach_image_to_active_layer(path, self.selected_transparency_mode())
+        else:
+            message = attach_image_to_document(path, self.selected_transparency_mode())
         self.append_log("%s\n%s" % (message, path))
 
     def _attach_edited_selection_result(self, result, job):
