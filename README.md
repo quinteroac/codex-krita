@@ -8,6 +8,7 @@ The plugin talks to the local Codex SDK/app-server from a Qt worker thread insid
 
 - Analyze the current document, active layer, or selection through Codex.
 - Ask Codex to generate or edit image artifacts for Krita and attach returned PNG files to the active document.
+- Plan and generate animation frames from a dedicated `Codex Animation` docker for storyboard, inbetween, loop, and cleanup workflows.
 - Ask Codex to generate Krita Python scripts and execute them through the plugin.
 - Keep agent actions non-destructive by default: generated images become new layers/documents and script runs are logged.
 
@@ -34,6 +35,7 @@ For Flatpak Krita (`org.kde.krita`), the installer targets:
 ```
 
 Restart Krita, enable `Codex for Krita` in the Python Plugin Manager, then open `Settings > Dockers > Codex`.
+Animation tools are available as a separate docker at `Settings > Dockers > Codex Animation` and from `Tools > Scripts > Codex Animation`.
 
 In the docker, use `Check Setup` first. If Krita Flatpak can see the host Codex binary, `Configure Codex` writes the needed Flatpak environment override automatically.
 

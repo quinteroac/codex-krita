@@ -467,13 +467,30 @@ def color_match_to_base(image, base, mask):
     return result
 
 
-def attach_image_patch_to_document(path, x, y, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):
+def attach_image_patch_to_document(
+    path,
+    x,
+    y,
+    transparency_mode=TRANSPARENCY_PRESERVE_ALPHA,
+    layer_name="Codex - generated",
+    enable_animation=False,
+    ensure_animation_frame=False,
+):
     app = Krita.instance()
     doc = app.activeDocument()
     if doc is None:
         return attach_image_to_document(path, transparency_mode)
 
-    paint_result = attach_image_as_transparent_paint_layer(doc, path, transparency_mode, int(x), int(y))
+    paint_result = attach_image_as_transparent_paint_layer(
+        doc,
+        path,
+        transparency_mode,
+        int(x),
+        int(y),
+        layer_name=layer_name,
+        enable_animation=enable_animation,
+        ensure_animation_frame=ensure_animation_frame,
+    )
     if paint_result:
         return paint_result
     return attach_image_to_document(path, transparency_mode)
@@ -506,7 +523,13 @@ def attach_image_to_document(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA
     return "Opened generated image as a new document; this Krita build did not expose createFileLayer()."
 
 
-def attach_image_to_active_layer(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA, offset_x=0, offset_y=0):
+def attach_image_to_active_layer(
+    path,
+    transparency_mode=TRANSPARENCY_PRESERVE_ALPHA,
+    offset_x=0,
+    offset_y=0,
+    ensure_animation_frame=False,
+):
     path = prepare_image_for_transparency_mode(path, transparency_mode)
     app = Krita.instance()
     doc = app.activeDocument()
@@ -523,6 +546,9 @@ def attach_image_to_active_layer(path, transparency_mode=TRANSPARENCY_PRESERVE_A
     if packed is None:
         return attach_image_to_document(path, transparency_mode)
 
+    if ensure_animation_frame:
+        ensure_blank_animation_frame(doc, node)
+
     ok = node.setPixelData(QByteArray(bytes(packed["pixels"])), int(offset_x), int(offset_y), packed["width"], packed["height"])
     doc.refreshProjection()
     if not ok:
@@ -533,7 +559,16 @@ def attach_image_to_active_layer(path, transparency_mode=TRANSPARENCY_PRESERVE_A
     )
 
 
-def attach_image_as_transparent_paint_layer(doc, path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA, offset_x=0, offset_y=0):
+def attach_image_as_transparent_paint_layer(
+    doc,
+    path,
+    transparency_mode=TRANSPARENCY_PRESERVE_ALPHA,
+    offset_x=0,
+    offset_y=0,
+    layer_name="Codex - generated",
+    enable_animation=False,
+    ensure_animation_frame=False,
+):
     packed = pack_image_for_krita(path, transparency_mode)
     if packed is None:
         return None
@@ -541,9 +576,13 @@ def attach_image_as_transparent_paint_layer(doc, path, transparency_mode=TRANSPA
     if doc.colorModel() != "RGBA" or doc.colorDepth() != "U8":
         return None
 
-    layer = doc.createNode("Codex - generated", "paintlayer")
+    layer = doc.createNode(layer_name, "paintlayer")
     layer.setOpacity(255)
+    if enable_animation and hasattr(layer, "enableAnimation"):
+        layer.enableAnimation()
     doc.rootNode().addChildNode(layer, None)
+    if ensure_animation_frame:
+        ensure_blank_animation_frame(doc, layer)
     ok = layer.setPixelData(
         QByteArray(bytes(packed["pixels"])),
         int(offset_x),
@@ -558,6 +597,19 @@ def attach_image_as_transparent_paint_layer(doc, path, transparency_mode=TRANSPA
         "Added generated image as a transparent paint layer "
         "(transparent=%s, semi=%s)." % (packed["transparent"], packed["semi_transparent"])
     )
+
+
+def ensure_blank_animation_frame(doc, node):
+    if node is None:
+        raise RuntimeError("No active animation layer is available.")
+    if hasattr(doc, "setActiveNode"):
+        doc.setActiveNode(node)
+    action = Krita.instance().action("add_blank_frame")
+    if action is None:
+        raise RuntimeError("This Krita build does not expose the add_blank_frame action.")
+    action.trigger()
+    doc.refreshProjection()
+    return True
 
 
 def pack_image_for_krita(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):

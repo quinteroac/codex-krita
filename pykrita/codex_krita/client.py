@@ -22,6 +22,12 @@ The code runs inside Krita's Python environment with `from krita import *` avail
 Avoid destructive file operations. Prefer creating new layers or reversible document changes.
 """
 
+ANIMATION_PLAN_SYSTEM_PROMPT = """You are planning animation work for Krita.
+Return only JSON with keys: summary, frames, notes.
+The plan must be practical for a 2D artist using Krita's timeline.
+Keep steps semi-guided and non-destructive by default.
+"""
+
 IMAGEGEN_SKILL_PATH = os.path.expanduser(
     os.environ.get("KRITA_CODEX_IMAGEGEN_SKILL", "~/.codex/skills/.system/imagegen")
 )
@@ -76,6 +82,42 @@ class CodexDirectClient:
                 params["task"],
                 params.get("document_context") or {},
             )
+        if method == "propose_animation_plan":
+            return self.propose_animation_plan(
+                params["task"],
+                params.get("document_context") or {},
+                params.get("animation_context") or {},
+            )
+        if method == "generate_animation_frame":
+            return self.generate_animation_frame(
+                params["prompt"],
+                params.get("plan_text", ""),
+                params.get("mode", "storyboard"),
+                params.get("target_frame", 0),
+                params.get("start_frame", 0),
+                params.get("end_frame", 0),
+                params.get("frame_count", 1),
+                params.get("quality", "medium"),
+                params.get("transparency_mode", TRANSPARENCY_PRESERVE_ALPHA),
+                params.get("image_path"),
+                params.get("image_refs"),
+                params.get("context_scope"),
+                params.get("animation_context") or {},
+            )
+        if method == "generate_animation_sheet":
+            return self.generate_animation_sheet(
+                params["prompt"],
+                params.get("plan_text", ""),
+                params.get("mode", "storyboard"),
+                params.get("start_frame", 0),
+                params.get("end_frame", 0),
+                params.get("frame_count", 1),
+                params.get("quality", "medium"),
+                params.get("transparency_mode", TRANSPARENCY_PRESERVE_ALPHA),
+                params.get("image_path"),
+                params.get("context_scope"),
+                params.get("animation_context") or {},
+            )
         if method == "validate_script":
             validate_script_code(params["code"])
             return {"valid": True}
@@ -110,7 +152,7 @@ class CodexDirectClient:
             return SkillInput("imagegen", IMAGEGEN_SKILL_PATH)
         return None
 
-    def _run_codex_with_imagegen(self, text, image_path=None, mask_path=None):
+    def _run_codex_with_imagegen(self, text, image_path=None, mask_path=None, image_refs=None):
         try:
             ensure_vendor_sdk_on_path()
             ensure_codex_runtime()
@@ -134,7 +176,19 @@ class CodexDirectClient:
         else:
             text = "Use the imagegen skill if available.\n\n" + text
         inputs.append(TextInput(text))
-        if image_path:
+        if image_refs:
+            for ref in image_refs:
+                path = ref.get("path")
+                if not path:
+                    continue
+                inputs.append(
+                    TextInput(
+                        "Animation reference image follows: %s, frame %s."
+                        % (ref.get("label") or "reference", ref.get("frame"))
+                    )
+                )
+                inputs.append(LocalImageInput(path))
+        elif image_path:
             inputs.append(LocalImageInput(image_path))
         if mask_path:
             inputs.append(
@@ -314,6 +368,187 @@ class CodexDirectClient:
             "reason": payload.get("reason", ""),
             "expected_effect": payload.get("expected_effect", ""),
         }
+
+    def propose_animation_plan(self, task, document_context, animation_context):
+        prompt = json.dumps(
+            {
+                "system": ANIMATION_PLAN_SYSTEM_PROMPT,
+                "task": task,
+                "document_context": document_context,
+                "animation_context": animation_context,
+                "required_output": {
+                    "summary": "one paragraph",
+                    "frames": [
+                        {
+                            "frame": "integer frame number or range",
+                            "purpose": "pose, breakdown, inbetween, cleanup, timing, or loop role",
+                            "instruction": "what to draw or generate",
+                        }
+                    ],
+                    "notes": ["short practical cautions"],
+                },
+            }
+        )
+        raw = self._run_codex(prompt).strip()
+        payload = self._parse_json(raw)
+        return {"plan": payload, "plan_text": self._format_animation_plan(payload, raw), "text": raw}
+
+    def generate_animation_frame(
+        self,
+        prompt,
+        plan_text="",
+        mode="storyboard",
+        target_frame=0,
+        start_frame=0,
+        end_frame=0,
+        frame_count=1,
+        quality="medium",
+        transparency_mode=TRANSPARENCY_PRESERVE_ALPHA,
+        image_path=None,
+        image_refs=None,
+        context_scope=None,
+        animation_context=None,
+    ):
+        transparency_instruction = self._animation_transparency_instruction(transparency_mode)
+        if image_refs:
+            context_instruction = "The attached image is the numbered animation sheet reference layer generated by Plan + Sheet."
+        else:
+            context_instruction = self._animation_context_instruction(context_scope) if image_path else None
+        target_size_instruction = self._animation_target_size_instruction(animation_context)
+        codex_prompt = "\n".join(
+            [line for line in [
+                "Use Codex's image-generation capability for a Krita animation workflow.",
+                "Create one PNG frame artifact for the requested animation step.",
+                "Animation mode: %s" % mode,
+                "Target frame: %s" % target_frame,
+                "Frame range: %s to %s, requested count: %s" % (start_frame, end_frame, frame_count),
+                "Artist request: %s" % prompt,
+                "Existing animation plan:\n%s" % plan_text if plan_text else None,
+                "Animation context JSON: %s" % json.dumps(animation_context or {}, sort_keys=True),
+                "Only one animation reference image is attached: a numbered animation sheet.",
+                "Analyze that sheet, find the panel labeled for target frame %s, and generate a fuller version of that same panel." % target_frame,
+                "Use the sheet for pose, silhouette, composition, character identity, proportions, palette, camera, scale, ground line, and style continuity.",
+                "Do not reproduce any numbers, labels, bands, borders, gutters, or text in the generated frame.",
+                target_size_instruction,
+                context_instruction,
+                "Preserve the subject identity, palette, line language, camera, and proportions from the attached Krita reference unless the user explicitly asks for a change.",
+                "For inbetweens, create a plausible intermediate pose rather than a full redesign. For loops, favor seamless timing and reusable silhouettes. For storyboard, favor readable staging.",
+                "Quality: %s" % quality,
+                transparency_instruction,
+                "Always create an image artifact. Return only JSON when a saved PNG path is exposed:",
+                '{"image_path": "/absolute/path/to/generated.png", "text": "short summary"}',
+                "If image artifacts are not available at all, return JSON with only a text field explaining the limitation.",
+            ] if line]
+        )
+        return self._parse_image_turn_result(
+            self._run_codex_with_imagegen(codex_prompt, image_path=image_path, image_refs=image_refs)
+        )
+
+    def generate_animation_sheet(
+        self,
+        prompt,
+        plan_text="",
+        mode="storyboard",
+        start_frame=0,
+        end_frame=0,
+        frame_count=1,
+        quality="medium",
+        transparency_mode=TRANSPARENCY_PRESERVE_ALPHA,
+        image_path=None,
+        context_scope=None,
+        animation_context=None,
+    ):
+        transparency_instruction = self._animation_transparency_instruction(transparency_mode)
+        context_instruction = self._animation_context_instruction(context_scope) if image_path else None
+        count = max(1, int(frame_count))
+        target_size_instruction = self._animation_target_size_instruction(animation_context)
+        codex_prompt = "\n".join(
+            [line for line in [
+                "Use Codex's image-generation capability for a Krita animation planning workflow.",
+                "Create one single horizontal animation contact sheet PNG, not separate images.",
+                "The sheet must contain exactly %s equal-width panels in one row." % count,
+                "Each artwork panel should represent the same canvas aspect ratio as the final animation frame.",
+                "Do not include any numbers, labels, text, arrows, gutters, borders, captions, UI marks, or label bands anywhere in the image.",
+                "Keep every character or moving subject fully inside its panel with at least 8 percent empty safe padding from each panel edge. Do not crop hands, feet, head, props, shadows, or motion arcs.",
+                "Each artwork panel is a rough but coherent thumbnail/key pose for the animation sequence from frame %s to frame %s." % (start_frame, end_frame),
+                "Animation mode: %s" % mode,
+                "Artist request: %s" % prompt,
+                "Animation plan:\n%s" % plan_text if plan_text else None,
+                "Animation context JSON: %s" % json.dumps(animation_context or {}, sort_keys=True),
+                context_instruction,
+                "Prioritize consistency across the whole strip: same character identity, proportions, costume, palette, camera, scale, ground line, and drawing style in every panel.",
+                "Make the pose progression readable across the strip. This sheet will be inserted into Krita as a reference layer and used as the only image reference for later full-frame generation.",
+                "Use simple rough animation thumbnails, not final cleanup. Do not redesign between panels.",
+                target_size_instruction,
+                "Quality: %s" % quality,
+                transparency_instruction,
+                "Always create an image artifact. Return only JSON when a saved PNG path is exposed:",
+                '{"image_path": "/absolute/path/to/animation_sheet.png", "text": "short summary"}',
+                "If image artifacts are not available at all, return JSON with only a text field explaining the limitation.",
+            ] if line]
+        )
+        return self._parse_image_turn_result(self._run_codex_with_imagegen(codex_prompt, image_path=image_path))
+
+    def _animation_target_size_instruction(self, animation_context):
+        width = (animation_context or {}).get("width")
+        height = (animation_context or {}).get("height")
+        if width and height:
+            return (
+                "Final frame size must be exactly %sx%s pixels. Keep every generated frame at this same size and aspect ratio."
+                % (int(width), int(height))
+            )
+        return "Keep every generated frame at the same size and aspect ratio as the active Krita document."
+
+    def _animation_transparency_instruction(self, transparency_mode):
+        if transparency_mode == TRANSPARENCY_OPAQUE:
+            return "Output format: fully opaque PNG. Preserve or create a background only if it is part of the animation frame."
+        if transparency_mode == TRANSPARENCY_REMOVE_FLAT_BACKGROUND:
+            return (
+                "Output format: PNG animation asset with a removable flat background. Prefer real alpha transparency. "
+                "If native alpha is unavailable, use a perfectly flat solid #00ff00 chroma-key background and do not use #00ff00 in the drawing. "
+                "No paper texture, grey canvas, shadow, gradient, border, floor plane, or lighting variation in the background."
+            )
+        return (
+            "Output format: PNG with real alpha transparency. The animation drawing must be on a transparent background. "
+            "Do not include a white, grey, paper, checkerboard, studio, or canvas background unless the user explicitly asks for one."
+        )
+
+    def _animation_context_instruction(self, context_scope):
+        if context_scope == "active_layer":
+            return (
+                "A Krita active-layer reference image is attached. Use it as the visual source for this animation frame."
+            )
+        if context_scope == "selection":
+            return (
+                "A Krita selection crop is attached. Use it as the visual source for this animation frame."
+            )
+        return "A full Krita document reference image is attached. Use it as visual continuity for this animation frame."
+
+    def _format_animation_plan(self, payload, raw):
+        if not isinstance(payload, dict) or "text" in payload:
+            return raw
+        lines = []
+        summary = payload.get("summary")
+        if summary:
+            lines.append(str(summary))
+        frames = payload.get("frames")
+        if isinstance(frames, list):
+            for frame in frames:
+                if not isinstance(frame, dict):
+                    lines.append("- %s" % frame)
+                    continue
+                lines.append(
+                    "- Frame %s: %s - %s"
+                    % (
+                        frame.get("frame", "?"),
+                        frame.get("purpose", "step"),
+                        frame.get("instruction", ""),
+                    )
+                )
+        notes = payload.get("notes")
+        if isinstance(notes, list) and notes:
+            lines.append("Notes: %s" % "; ".join(str(note) for note in notes))
+        return "\n".join(lines) if lines else raw
 
     def _parse_image_result(self, raw):
         payload = self._parse_json(raw)
