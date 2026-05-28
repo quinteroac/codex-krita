@@ -493,7 +493,7 @@ def attach_image_patch_to_document(
     )
     if paint_result:
         return paint_result
-    return attach_image_to_document(path, transparency_mode)
+    return attach_image_as_file_layer_or_document(path)
 
 
 def attach_image_to_document(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA):
@@ -509,6 +509,18 @@ def attach_image_to_document(path, transparency_mode=TRANSPARENCY_PRESERVE_ALPHA
     paint_result = attach_image_as_transparent_paint_layer(doc, path, transparency_mode)
     if paint_result:
         return paint_result
+
+    return attach_image_as_file_layer_or_document(path)
+
+
+def attach_image_as_file_layer_or_document(path):
+    app = Krita.instance()
+    doc = app.activeDocument()
+    if doc is None:
+        new_doc = app.openDocument(path)
+        if app.activeWindow() is not None:
+            app.activeWindow().addView(new_doc)
+        return "Opened generated image as a new document."
 
     root = doc.rootNode()
     if hasattr(doc, "createFileLayer"):
@@ -592,11 +604,32 @@ def attach_image_as_transparent_paint_layer(
     )
     doc.refreshProjection()
     if not ok:
+        remove_child_node(doc.rootNode(), layer)
         return None
     return (
         "Added generated image as a transparent paint layer "
         "(transparent=%s, semi=%s)." % (packed["transparent"], packed["semi_transparent"])
     )
+
+
+def remove_child_node(parent, child):
+    for method_name in ("removeChildNode", "removeChild"):
+        method = getattr(parent, method_name, None)
+        if method is None:
+            continue
+        try:
+            method(child)
+            return True
+        except Exception:
+            pass
+    remove = getattr(child, "remove", None)
+    if remove is not None:
+        try:
+            remove()
+            return True
+        except Exception:
+            pass
+    return False
 
 
 def ensure_blank_animation_frame(doc, node):
