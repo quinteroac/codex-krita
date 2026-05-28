@@ -561,13 +561,23 @@ def attach_image_to_active_layer(
     if ensure_animation_frame:
         ensure_blank_animation_frame(doc, node)
 
-    ok = node.setPixelData(QByteArray(bytes(packed["pixels"])), int(offset_x), int(offset_y), packed["width"], packed["height"])
+    clipped = clip_packed_to_document(packed, doc, int(offset_x), int(offset_y))
+    if clipped is None:
+        return attach_image_to_document(path, transparency_mode)
+
+    ok = node.setPixelData(
+        QByteArray(bytes(clipped["pixels"])),
+        clipped["x"],
+        clipped["y"],
+        clipped["width"],
+        clipped["height"],
+    )
     doc.refreshProjection()
-    if not ok:
+    if ok is False:
         return attach_image_to_document(path, transparency_mode)
     return (
         "Added generated image to the active layer "
-        "(transparent=%s, semi=%s)." % (packed["transparent"], packed["semi_transparent"])
+        "(transparent=%s, semi=%s)." % (clipped["transparent"], clipped["semi_transparent"])
     )
 
 
@@ -595,20 +605,26 @@ def attach_image_as_transparent_paint_layer(
     doc.rootNode().addChildNode(layer, None)
     if ensure_animation_frame:
         ensure_blank_animation_frame(doc, layer)
+
+    clipped = clip_packed_to_document(packed, doc, int(offset_x), int(offset_y))
+    if clipped is None:
+        remove_child_node(doc.rootNode(), layer)
+        return None
+
     ok = layer.setPixelData(
-        QByteArray(bytes(packed["pixels"])),
-        int(offset_x),
-        int(offset_y),
-        packed["width"],
-        packed["height"],
+        QByteArray(bytes(clipped["pixels"])),
+        clipped["x"],
+        clipped["y"],
+        clipped["width"],
+        clipped["height"],
     )
     doc.refreshProjection()
-    if not ok:
+    if ok is False:
         remove_child_node(doc.rootNode(), layer)
         return None
     return (
         "Added generated image as a transparent paint layer "
-        "(transparent=%s, semi=%s)." % (packed["transparent"], packed["semi_transparent"])
+        "(transparent=%s, semi=%s)." % (clipped["transparent"], clipped["semi_transparent"])
     )
 
 
@@ -630,6 +646,61 @@ def remove_child_node(parent, child):
         except Exception:
             pass
     return False
+
+
+def clip_packed_to_document(packed, doc, offset_x, offset_y):
+    doc_width = int(doc.width())
+    doc_height = int(doc.height())
+    width = int(packed["width"])
+    height = int(packed["height"])
+    left = max(0, int(offset_x))
+    top = max(0, int(offset_y))
+    right = min(doc_width, int(offset_x) + width)
+    bottom = min(doc_height, int(offset_y) + height)
+    if right <= left or bottom <= top:
+        return None
+
+    src_left = left - int(offset_x)
+    src_top = top - int(offset_y)
+    clipped_width = right - left
+    clipped_height = bottom - top
+    if src_left == 0 and src_top == 0 and clipped_width == width and clipped_height == height:
+        return {
+            "pixels": packed["pixels"],
+            "x": left,
+            "y": top,
+            "width": width,
+            "height": height,
+            "transparent": packed["transparent"],
+            "semi_transparent": packed["semi_transparent"],
+        }
+
+    source = packed["pixels"]
+    clipped = bytearray(clipped_width * clipped_height * 4)
+    transparent = 0
+    semi_transparent = 0
+    for row in range(clipped_height):
+        source_start = ((src_top + row) * width + src_left) * 4
+        source_end = source_start + clipped_width * 4
+        target_start = row * clipped_width * 4
+        row_bytes = source[source_start:source_end]
+        clipped[target_start : target_start + len(row_bytes)] = row_bytes
+        for column in range(clipped_width):
+            alpha = row_bytes[column * 4 + 3]
+            if alpha == 0:
+                transparent += 1
+            elif alpha < 255:
+                semi_transparent += 1
+
+    return {
+        "pixels": clipped,
+        "x": left,
+        "y": top,
+        "width": clipped_width,
+        "height": clipped_height,
+        "transparent": transparent,
+        "semi_transparent": semi_transparent,
+    }
 
 
 def ensure_blank_animation_frame(doc, node):
