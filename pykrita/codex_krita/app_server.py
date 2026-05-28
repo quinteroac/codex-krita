@@ -35,6 +35,20 @@ def skill_input(name, path):
     return {"type": "skill", "name": name, "path": path}
 
 
+def _notification_turn_id(method, payload):
+    if not isinstance(payload, dict):
+        return None
+    turn = payload.get("turn")
+    if isinstance(turn, dict):
+        return turn.get("id")
+    for key in ("turnId", "turn_id"):
+        if key in payload:
+            return payload.get(key)
+    if method == "thread/tokenUsage/updated":
+        return payload.get("turnId") or payload.get("turn_id")
+    return None
+
+
 class AppServerClient:
     def __init__(self, codex_bin, model=None):
         if not codex_bin:
@@ -126,6 +140,9 @@ class AppServerClient:
     def turn_stream(self, turn_id):
         while True:
             method, payload = self._notifications.get()
+            event_turn_id = _notification_turn_id(method, payload)
+            if event_turn_id != turn_id:
+                continue
             event = SimpleNamespace(method=method, payload=_to_namespace(payload))
             yield event
             turn = payload.get("turn") if isinstance(payload, dict) else None

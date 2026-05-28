@@ -519,6 +519,7 @@ class CodexDirectClient:
         self._activity("Codex: starting turn")
         turn_id = codex.turn_start(thread_id, turn_input)
         items = []
+        seen_item_ids = set()
         usage = None
         completed_turn = None
         event_count = 0
@@ -532,6 +533,11 @@ class CodexDirectClient:
             if method == "item/completed" and payload is not None:
                 item = getattr(payload, "item", None)
                 if item is not None:
+                    item_id = getattr(item, "id", None)
+                    if item_id and item_id in seen_item_ids:
+                        continue
+                    if item_id:
+                        seen_item_ids.add(item_id)
                     items.append(item)
                 continue
             if method == "thread/tokenUsage/updated" and payload is not None:
