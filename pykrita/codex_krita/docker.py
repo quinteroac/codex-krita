@@ -32,7 +32,7 @@ from .image_bridge import (
 )
 from .reference_board import add_reference_image
 from .script_runner import run_krita_script
-from .setup import diagnostics, ensure_managed_sdk_installed, save_config, setup_status_text
+from .setup import diagnostics, save_config, setup_status_text
 from .worker import RpcWorker
 
 
@@ -272,11 +272,6 @@ class CodexDocker(DockWidget):
     def check_setup(self):
         self.append_log("Checking Codex setup...")
         try:
-            info = diagnostics()
-            if not info["sdk_available"]:
-                self.append_log("Codex SDK missing. Downloading SDK source into the plugin data directory...")
-                self.append_log(ensure_managed_sdk_installed())
-                self.load_setup_fields()
             self.append_log(setup_status_text())
         except Exception as exc:
             self.append_log("Setup error: %s" % exc)

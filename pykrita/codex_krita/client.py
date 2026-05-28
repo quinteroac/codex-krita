@@ -7,13 +7,14 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from .app_server import AppServerClient, local_image_input, skill_input, text_input
 from .image_bridge import (
     TRANSPARENCY_OPAQUE,
     TRANSPARENCY_PRESERVE_ALPHA,
     TRANSPARENCY_REMOVE_FLAT_BACKGROUND,
 )
 from .script_runner import validate_script_code
-from .setup import ensure_codex_runtime, ensure_vendor_sdk_on_path, find_codex_binary
+from .setup import find_codex_binary
 
 
 SCRIPT_SYSTEM_PROMPT = """You generate Python scripts for Krita.
@@ -124,97 +125,55 @@ class CodexDirectClient:
         raise RuntimeError("Unknown method: %s" % method)
 
     def _run_codex(self, prompt):
-        try:
-            ensure_vendor_sdk_on_path()
-            ensure_codex_runtime()
-            from openai_codex import AppServerConfig, Codex
-        except Exception as exc:
-            raise RuntimeError(
-                "The experimental Codex Python SDK is not available inside Krita's Python. "
-                "Open the Codex docker and click Check Setup."
-            ) from exc
-
         codex_bin = find_codex_binary()
-        if codex_bin:
-            codex_context = Codex(config=AppServerConfig(codex_bin=codex_bin))
-        else:
-            codex_context = Codex()
-
-        with codex_context as codex:
-            thread = codex.thread_start(model=self.model)
-            result = self._run_turn_stream(thread, prompt)
+        with AppServerClient(codex_bin, model=self.model) as codex:
+            thread_id = codex.thread_start()
+            result = self._run_turn_stream(codex, thread_id, prompt)
         return result.final_response
 
     def _imagegen_skill_input(self):
-        from openai_codex import SkillInput
-
         if Path(IMAGEGEN_SKILL_PATH).exists():
-            return SkillInput("imagegen", IMAGEGEN_SKILL_PATH)
+            return skill_input("imagegen", str(IMAGEGEN_SKILL_PATH))
         return None
 
     def _run_codex_with_imagegen(self, text, image_path=None, mask_path=None, image_refs=None):
-        try:
-            ensure_vendor_sdk_on_path()
-            ensure_codex_runtime()
-            from openai_codex import AppServerConfig, Codex, LocalImageInput, TextInput
-        except Exception as exc:
-            raise RuntimeError(
-                "The experimental Codex Python SDK is not available inside Krita's Python. "
-                "Open the Codex docker and click Check Setup."
-            ) from exc
-
         codex_bin = find_codex_binary()
-        if codex_bin:
-            codex_context = Codex(config=AppServerConfig(codex_bin=codex_bin))
-        else:
-            codex_context = Codex()
-
         inputs = []
         skill = self._imagegen_skill_input()
         if skill is not None:
             inputs.append(skill)
         else:
             text = "Use the imagegen skill if available.\n\n" + text
-        inputs.append(TextInput(text))
+        inputs.append(text_input(text))
         if image_refs:
             for ref in image_refs:
                 path = ref.get("path")
                 if not path:
                     continue
                 inputs.append(
-                    TextInput(
+                    text_input(
                         "Animation reference image follows: %s, frame %s."
                         % (ref.get("label") or "reference", ref.get("frame"))
                     )
                 )
-                inputs.append(LocalImageInput(path))
+                inputs.append(local_image_input(path))
         elif image_path:
-            inputs.append(LocalImageInput(image_path))
+            inputs.append(local_image_input(image_path))
         if mask_path:
             inputs.append(
-                TextInput(
+                text_input(
                     "Inpainting mask image follows. Transparent pixels are the selected editable area. "
                     "Opaque pixels must be preserved from the base image. Use this attached image as visual mask input only; "
                     "do not inspect, transform, or postprocess the mask file with shell commands."
                 )
             )
-            inputs.append(LocalImageInput(mask_path))
+            inputs.append(local_image_input(mask_path))
 
-        with codex_context as codex:
-            thread = codex.thread_start(model=self.model)
-            return self._run_turn_stream(thread, inputs)
+        with AppServerClient(codex_bin, model=self.model) as codex:
+            thread_id = codex.thread_start()
+            return self._run_turn_stream(codex, thread_id, inputs)
 
     def analyze_image(self, image_path, question):
-        try:
-            ensure_vendor_sdk_on_path()
-            ensure_codex_runtime()
-            from openai_codex import AppServerConfig, Codex, LocalImageInput, TextInput
-        except Exception as exc:
-            raise RuntimeError(
-                "The experimental Codex Python SDK is not available inside Krita's Python. "
-                "Open the Codex docker and click Check Setup."
-            ) from exc
-
         prompt = "\n".join(
             [
                 "Analyze this Krita artwork using Codex's multimodal capabilities.",
@@ -223,14 +182,13 @@ class CodexDirectClient:
             ]
         )
         codex_bin = find_codex_binary()
-        if codex_bin:
-            codex_context = Codex(config=AppServerConfig(codex_bin=codex_bin))
-        else:
-            codex_context = Codex()
-
-        with codex_context as codex:
-            thread = codex.thread_start(model=self.model)
-            result = self._run_turn_stream(thread, [TextInput(prompt), LocalImageInput(image_path)])
+        with AppServerClient(codex_bin, model=self.model) as codex:
+            thread_id = codex.thread_start()
+            result = self._run_turn_stream(
+                codex,
+                thread_id,
+                [text_input(prompt), local_image_input(image_path)],
+            )
         return {"text": result.final_response}
 
     def generate_image(
@@ -557,15 +515,15 @@ class CodexDirectClient:
             "text": payload.get("text", raw),
         }
 
-    def _run_turn_stream(self, thread, turn_input):
+    def _run_turn_stream(self, codex, thread_id, turn_input):
         self._activity("Codex: starting turn")
-        turn = thread.turn(turn_input)
+        turn_id = codex.turn_start(thread_id, turn_input)
         items = []
         usage = None
         completed_turn = None
         event_count = 0
 
-        for event in turn.stream():
+        for event in codex.turn_stream(turn_id):
             event_count += 1
             method = getattr(event, "method", "")
             payload = getattr(event, "payload", None)

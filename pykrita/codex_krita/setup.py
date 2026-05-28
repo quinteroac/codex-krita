@@ -1,4 +1,3 @@
-import importlib
 import importlib.util
 import json
 import os
@@ -41,21 +40,7 @@ LEGACY_FLATPAK_CONFIG_PATH = LEGACY_FLATPAK_CONFIG_DIR / "config.json"
 
 
 def codex_sdk_available():
-    ensure_vendor_sdk_on_path()
-    try:
-        importlib.import_module("openai_codex")
-        return True
-    except Exception:
-        return False
-
-
-def codex_sdk_import_error():
-    ensure_vendor_sdk_on_path()
-    try:
-        importlib.import_module("openai_codex")
-        return None
-    except Exception as exc:
-        return str(exc)
+    return find_codex_sdk_dir() is not None
 
 
 def _path_from_env(name):
@@ -264,7 +249,6 @@ def diagnostics():
     sdk_available = codex_sdk_available()
     return {
         "sdk_available": sdk_available,
-        "sdk_import_error": None if sdk_available else codex_sdk_import_error(),
         "vendor_sdk": str(sdk_dir) if sdk_dir.exists() else None,
         "detected_sdk": str(find_codex_sdk_dir() or ""),
         "codex_bin": codex_bin,
@@ -281,18 +265,19 @@ def diagnostics():
 
 
 def save_config(sdk_dir=None, codex_bin=None):
-    selected_sdk_dir = Path(sdk_dir).expanduser() if sdk_dir else find_codex_sdk_dir()
+    selected_sdk_dir = Path(sdk_dir).expanduser() if sdk_dir else None
     selected_codex_bin = codex_bin or find_codex_binary()
 
-    if not selected_sdk_dir or not _sdk_dir_valid(selected_sdk_dir):
-        raise RuntimeError("Codex SDK Python directory was not found.")
+    if selected_sdk_dir and not _sdk_dir_valid(selected_sdk_dir):
+        raise RuntimeError("Codex SDK Python directory is not valid: %s" % selected_sdk_dir)
     if not selected_codex_bin:
         raise RuntimeError("Codex binary was not found.")
     if not os.path.exists(selected_codex_bin) or not os.access(selected_codex_bin, os.X_OK):
         raise RuntimeError("Codex binary is not executable: %s" % selected_codex_bin)
 
     config = read_config()
-    config["sdk_python_dir"] = str(selected_sdk_dir)
+    if selected_sdk_dir:
+        config["sdk_python_dir"] = str(selected_sdk_dir)
     config["codex_bin"] = selected_codex_bin
     write_config(config)
     return "Saved Codex config to %s" % CONFIG_PATH
@@ -309,8 +294,7 @@ def apply_flatpak_codex_bin_override(codex_bin):
 def setup_status_text():
     info = diagnostics()
     lines = []
-    lines.append("Codex SDK: %s" % ("installed" if info["sdk_available"] else "missing"))
-    lines.append("Bundled SDK path: %s" % (info["vendor_sdk"] or "not found"))
+    lines.append("Codex SDK source: %s" % (info["vendor_sdk"] or "not configured"))
     lines.append("Codex binary: %s" % (info["codex_bin"] or "not found"))
     lines.append("Imagegen skill: %s" % (info["imagegen_skill"] or "not found"))
     lines.append("Node binary: %s" % (info["node_bin"] or "not found"))
@@ -319,14 +303,12 @@ def setup_status_text():
     if info["is_flatpak"]:
         if info["legacy_config_path"]:
             lines.append("Legacy Flatpak config: %s" % info["legacy_config_path"])
-    if not info["sdk_available"]:
-        lines.append("")
-        lines.append("Click Check Setup to download the Codex SDK source into the plugin data directory.")
-        if info["sdk_import_error"]:
-            lines.append("SDK import error: %s" % info["sdk_import_error"])
-    if info["sdk_available"] and not info["codex_bin"]:
+    if not info["codex_bin"]:
         lines.append("")
         lines.append("Install Codex or configure KRITA_CODEX_BIN.")
+    if not info["sdk_available"]:
+        lines.append("")
+        lines.append("Codex SDK source is optional. The plugin talks to codex app-server directly.")
     if info["is_flatpak"] and info["codex_bin"] and not info["node_bin"]:
         lines.append("")
         lines.append("Codex CLI needs node. Configure the Flatpak PATH so /var/run/host/usr/bin is visible.")
