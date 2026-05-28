@@ -33,6 +33,13 @@ def iter_plugin_files() -> list[Path]:
     return sorted(files, key=lambda path: path.as_posix())
 
 
+def iter_plugin_dirs() -> list[Path]:
+    dirs = {PLUGIN_DIR}
+    for path in iter_plugin_files():
+        dirs.update(parent for parent in path.parents if parent != PYKRITA_DIR and PYKRITA_DIR in parent.parents)
+    return sorted(dirs, key=lambda path: path.as_posix())
+
+
 def validate_sources() -> None:
     if not DESKTOP_FILE.is_file():
         raise SystemExit(f"Missing Krita plugin desktop file: {DESKTOP_FILE}")
@@ -46,6 +53,8 @@ def build_archive(output_path: Path) -> None:
 
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(DESKTOP_FILE, DESKTOP_FILE.name)
+        for path in iter_plugin_dirs():
+            archive.writestr(f"{path.relative_to(PYKRITA_DIR).as_posix()}/", "")
         for path in iter_plugin_files():
             archive.write(path, path.relative_to(PYKRITA_DIR).as_posix())
 
