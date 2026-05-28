@@ -15,13 +15,30 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PLUGIN_DIR.parents[1]
 VENDOR_SDK_DIR = REPO_ROOT / ".vendor" / "codex" / "sdk" / "python"
 VENDOR_SDK_SRC_DIR = VENDOR_SDK_DIR / "src"
-CONFIG_DIR = Path.home() / ".var" / "app" / "org.kde.krita" / "data" / "krita-codex"
-CONFIG_PATH = CONFIG_DIR / "config.json"
-MANAGED_CODEX_DIR = CONFIG_DIR / "vendor" / "codex"
 CODEX_ARCHIVE_URL = "https://github.com/openai/codex/archive/refs/heads/main.zip"
 IMAGEGEN_SKILL_PATH = Path(
     os.path.expanduser(os.environ.get("KRITA_CODEX_IMAGEGEN_SKILL", "~/.codex/skills/.system/imagegen"))
 )
+LEGACY_FLATPAK_CONFIG_DIR = Path.home() / ".var" / "app" / "org.kde.krita" / "data" / "krita-codex"
+
+
+def is_flatpak():
+    return os.environ.get("FLATPAK") == "1" or Path("/.flatpak-info").exists()
+
+
+def krita_data_home():
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home).expanduser() / "krita"
+    if is_flatpak():
+        return Path.home() / ".var" / "app" / "org.kde.krita" / "data" / "krita"
+    return Path.home() / ".local" / "share" / "krita"
+
+
+CONFIG_DIR = krita_data_home() / "krita-codex"
+CONFIG_PATH = CONFIG_DIR / "config.json"
+MANAGED_CODEX_DIR = CONFIG_DIR / "vendor" / "codex"
+LEGACY_FLATPAK_CONFIG_PATH = LEGACY_FLATPAK_CONFIG_DIR / "config.json"
 
 
 def codex_sdk_available():
@@ -168,10 +185,13 @@ def ensure_managed_sdk_installed():
 
 
 def read_config():
-    if not CONFIG_PATH.exists():
+    config_path = CONFIG_PATH
+    if is_flatpak() and not config_path.exists() and LEGACY_FLATPAK_CONFIG_PATH.exists():
+        config_path = LEGACY_FLATPAK_CONFIG_PATH
+    if not config_path.exists():
         return {}
     try:
-        with open(str(CONFIG_PATH), "r", encoding="utf-8") as config_file:
+        with open(str(config_path), "r", encoding="utf-8") as config_file:
             return json.load(config_file)
     except Exception:
         return {}
@@ -199,17 +219,20 @@ def find_codex_binary():
     candidates = [
         config.get("codex_bin"),
         configured,
-        "/var/run/host/usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
         "/usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
         shutil.which("codex"),
-        "/var/run/host/usr/bin/codex",
-        "/var/run/host/usr/local/bin/codex",
-        "/var/run/host/home/%s/.local/bin/codex" % os.environ.get("USER", ""),
         "/usr/bin/codex",
         "/usr/local/bin/codex",
         os.path.expanduser("~/.local/bin/codex"),
         os.path.expanduser("~/.npm-global/bin/codex"),
     ]
+    if is_flatpak():
+        candidates[2:2] = [
+            "/var/run/host/usr/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+            "/var/run/host/usr/bin/codex",
+            "/var/run/host/usr/local/bin/codex",
+            "/var/run/host/home/%s/.local/bin/codex" % os.environ.get("USER", ""),
+        ]
     for candidate in candidates:
         if candidate and os.path.exists(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -219,11 +242,14 @@ def find_codex_binary():
 def find_node_binary():
     candidates = [
         shutil.which("node"),
-        "/var/run/host/usr/bin/node",
-        "/var/run/host/usr/local/bin/node",
         "/usr/bin/node",
         "/usr/local/bin/node",
     ]
+    if is_flatpak():
+        candidates[1:1] = [
+            "/var/run/host/usr/bin/node",
+            "/var/run/host/usr/local/bin/node",
+        ]
     for candidate in candidates:
         if candidate and os.path.exists(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -244,7 +270,10 @@ def diagnostics():
         "path": os.environ.get("PATH", ""),
         "env_codex_bin": os.environ.get("KRITA_CODEX_BIN"),
         "config_path": str(CONFIG_PATH),
-        "is_flatpak": os.environ.get("FLATPAK") == "1",
+        "legacy_config_path": str(LEGACY_FLATPAK_CONFIG_PATH)
+        if LEGACY_FLATPAK_CONFIG_PATH.exists() and LEGACY_FLATPAK_CONFIG_PATH != CONFIG_PATH
+        else None,
+        "is_flatpak": is_flatpak(),
     }
 
 
@@ -282,16 +311,21 @@ def setup_status_text():
     lines.append("Codex binary: %s" % (info["codex_bin"] or "not found"))
     lines.append("Imagegen skill: %s" % (info["imagegen_skill"] or "not found"))
     lines.append("Node binary: %s" % (info["node_bin"] or "not found"))
+    lines.append("Krita Flatpak: %s" % ("yes" if info["is_flatpak"] else "no"))
+    lines.append("Config file: %s" % info["config_path"])
     if info["is_flatpak"]:
-        lines.append("Krita Flatpak: yes")
-        lines.append("Config file: %s" % info["config_path"])
+        if info["legacy_config_path"]:
+            lines.append("Legacy Flatpak config: %s" % info["legacy_config_path"])
     if not info["sdk_available"]:
         lines.append("")
         lines.append("Click Check Setup to download and install the Codex SDK into the plugin data directory.")
     if info["sdk_available"] and not info["codex_bin"]:
         lines.append("")
         lines.append("Install Codex or configure KRITA_CODEX_BIN.")
-    if info["codex_bin"] and not info["node_bin"]:
+    if info["is_flatpak"] and info["codex_bin"] and not info["node_bin"]:
         lines.append("")
         lines.append("Codex CLI needs node. Configure the Flatpak PATH so /var/run/host/usr/bin is visible.")
+    elif info["codex_bin"] and not info["node_bin"]:
+        lines.append("")
+        lines.append("Codex CLI needs node. Install node or ensure it is on PATH.")
     return "\n".join(lines)

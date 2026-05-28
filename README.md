@@ -31,7 +31,7 @@ codex
 
 The first `codex` run opens the authentication flow. The plugin expects that local Codex is already signed in and usable from a terminal.
 
-After importing the plugin in Krita, open `Settings > Dockers > Codex` and click `Check Setup`. If the Python SDK is missing, the plugin downloads the Codex repo archive, installs `sdk/python` into Krita's Python environment, saves the SDK path, and then prints the final setup status.
+After importing the plugin in Krita, open `Settings > Dockers > Codex` and click `Check Setup`. If the Python SDK is missing, the plugin downloads the Codex repo archive, installs `sdk/python` into Krita's Python environment, saves the SDK path in Krita's data directory, and then prints the final setup status.
 
 ## Package Plugin For Import
 
@@ -89,7 +89,7 @@ In the docker, use `Check Setup` first. It prepares the SDK if needed and report
 ./scripts/install_flatpak_deps.sh
 ```
 
-The script clones the Codex repo into `.vendor/codex` if needed, prepares the SDK runtime, and writes a plugin-local config file at `~/.var/app/org.kde.krita/data/krita-codex/config.json`.
+The script clones the Codex repo into `.vendor/codex` if needed, prepares the SDK runtime, and writes a plugin-local config file at `~/.var/app/org.kde.krita/data/krita/krita-codex/config.json`.
 
 Verify from the Flatpak Python if needed:
 
@@ -109,6 +109,8 @@ If Flatpak dependency management becomes painful, install Krita outside Flatpak 
 cd /path/to/codex/sdk/python
 python3 -m pip install -e .
 ```
+
+For native Krita, `Check Setup` stores its managed SDK and config under `~/.local/share/krita/krita-codex` unless `XDG_DATA_HOME` points Krita somewhere else.
 
 Then set `KRITA_PYKRITA_DIR` before running `install_plugin.sh` if the native Krita resource path differs:
 

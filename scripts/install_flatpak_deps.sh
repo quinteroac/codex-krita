@@ -34,7 +34,7 @@ else
   FLATPAK_CODEX_BIN=""
 fi
 
-CONFIG_DIR="$HOME/.var/app/org.kde.krita/data/krita-codex"
+CONFIG_DIR="$HOME/.var/app/org.kde.krita/data/krita/krita-codex"
 CONFIG_PATH="$CONFIG_DIR/config.json"
 mkdir -p "$CONFIG_DIR"
 python3 - "$CONFIG_PATH" "$CODEX_SDK_PYTHON" "$FLATPAK_CODEX_BIN" <<'PY'

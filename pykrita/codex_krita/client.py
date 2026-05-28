@@ -131,7 +131,7 @@ class CodexDirectClient:
         except Exception as exc:
             raise RuntimeError(
                 "The experimental Codex Python SDK is not available inside Krita's Python. "
-                "Run scripts/install_flatpak_deps.sh or reinstall the plugin package with bundled SDK files."
+                "Open the Codex docker and click Check Setup."
             ) from exc
 
         codex_bin = find_codex_binary()
@@ -160,7 +160,7 @@ class CodexDirectClient:
         except Exception as exc:
             raise RuntimeError(
                 "The experimental Codex Python SDK is not available inside Krita's Python. "
-                "Run scripts/install_flatpak_deps.sh or reinstall the plugin package with bundled SDK files."
+                "Open the Codex docker and click Check Setup."
             ) from exc
 
         codex_bin = find_codex_binary()
@@ -212,7 +212,7 @@ class CodexDirectClient:
         except Exception as exc:
             raise RuntimeError(
                 "The experimental Codex Python SDK is not available inside Krita's Python. "
-                "Run scripts/install_flatpak_deps.sh or reinstall the plugin package with bundled SDK files."
+                "Open the Codex docker and click Check Setup."
             ) from exc
 
         prompt = "\n".join(
