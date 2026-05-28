@@ -20,7 +20,49 @@ The plugin talks to the local Codex SDK/app-server from a Qt worker thread insid
 
 The official Codex SDK docs describe the Python SDK as experimental and say it controls the local Codex app-server over JSON-RPC. The plugin uses that SDK directly rather than calling the OpenAI API SDK.
 
-## Install Plugin
+## Install Codex
+
+Install the local Codex CLI first. On macOS/Linux, the official standalone installer is:
+
+```bash
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+codex
+```
+
+The first `codex` run opens the authentication flow. The plugin expects that local Codex is already signed in and usable from a terminal.
+
+After importing the plugin in Krita, open `Settings > Dockers > Codex` and click `Check Setup`. If the Python SDK is missing, the plugin downloads the Codex repo archive, installs `sdk/python` into Krita's Python environment, saves the SDK path, and then prints the final setup status.
+
+## Package Plugin For Import
+
+Build a ZIP that Krita can import from any installation with Python plugin support:
+
+```bash
+./scripts/package_plugin.py
+```
+
+This writes:
+
+```text
+dist/codex_krita.zip
+```
+
+In Krita, open `Tools > Scripts > Import Python Plugin from File`, select `dist/codex_krita.zip`, restart Krita, then enable `Codex for Krita` in the Python Plugin Manager.
+
+The ZIP contains the Krita plugin only. The target Krita environment still needs access to the local Codex binary. Open `Settings > Dockers > Codex` and click `Check Setup` to prepare the SDK and verify the Codex binary path.
+
+## Publish GitHub Release
+
+The release workflow builds `dist/codex_krita.zip` and attaches it to a GitHub Release when a `v*` tag is pushed:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+It can also be run manually from GitHub Actions with a release tag name.
+
+## Install Plugin For Development
 
 Install the Krita plugin by symlinking it into Krita's `pykrita` resource directory:
 
@@ -37,11 +79,11 @@ For Flatpak Krita (`org.kde.krita`), the installer targets:
 Restart Krita, enable `Codex for Krita` in the Python Plugin Manager, then open `Settings > Dockers > Codex`.
 Animation tools are available as a separate docker at `Settings > Dockers > Codex Animation` and from `Tools > Scripts > Codex Animation`.
 
-In the docker, use `Check Setup` first. If Krita Flatpak can see the host Codex binary, `Configure Codex` writes the needed Flatpak environment override automatically.
+In the docker, use `Check Setup` first. It prepares the SDK if needed and reports any missing Codex binary configuration.
 
-## Install Codex SDK For Flatpak Krita
+## Optional Flatpak Helper
 
-Prepare the bundled SDK/runtime for Krita Flatpak:
+`Check Setup` can prepare the SDK from inside the plugin. For development installs of Flatpak Krita, this helper does the same preparation from a terminal:
 
 ```bash
 ./scripts/install_flatpak_deps.sh
@@ -52,7 +94,7 @@ The script clones the Codex repo into `.vendor/codex` if needed, prepares the SD
 Verify from the Flatpak Python if needed:
 
 ```bash
-flatpak run --filesystem=/home/victor/dev/krita-codex --command=python3 org.kde.krita -c 'import sys; sys.path.insert(0, "/home/victor/dev/krita-codex/.vendor/codex/sdk/python/src"); import openai_codex; print("ok")'
+flatpak run --filesystem="$PWD" --command=python3 org.kde.krita -c 'import os, sys; sys.path.insert(0, os.path.join(os.getcwd(), ".vendor/codex/sdk/python/src")); import openai_codex; print("ok")'
 ```
 
 Do not use `flatpak override` for this plugin. Use `Check Setup` and `Save Config` in the docker instead.

@@ -1,9 +1,11 @@
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QTextEdit,
@@ -30,7 +32,7 @@ from .image_bridge import (
 )
 from .reference_board import add_reference_image
 from .script_runner import run_krita_script
-from .setup import diagnostics, save_detected_config, setup_status_text
+from .setup import diagnostics, ensure_managed_sdk_installed, save_config, setup_status_text
 from .worker import RpcWorker
 
 
@@ -60,10 +62,31 @@ class CodexDocker(DockWidget):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
+        setup_form = QFormLayout()
+        self.sdk_dir_input = QLineEdit()
+        self.sdk_dir_input.setPlaceholderText("/path/to/codex/sdk/python")
+        self.codex_bin_input = QLineEdit()
+        self.codex_bin_input.setPlaceholderText("/path/to/codex")
+
+        sdk_row = QHBoxLayout()
+        self.browse_sdk_btn = QPushButton("Browse")
+        sdk_row.addWidget(self.sdk_dir_input)
+        sdk_row.addWidget(self.browse_sdk_btn)
+        setup_form.addRow("Codex SDK", sdk_row)
+
+        codex_bin_row = QHBoxLayout()
+        self.browse_codex_bin_btn = QPushButton("Browse")
+        codex_bin_row.addWidget(self.codex_bin_input)
+        codex_bin_row.addWidget(self.browse_codex_bin_btn)
+        setup_form.addRow("Codex binary", codex_bin_row)
+        layout.addLayout(setup_form)
+
         setup_row = QHBoxLayout()
         self.check_setup_btn = QPushButton("Check Setup")
+        self.auto_detect_btn = QPushButton("Auto Detect")
         self.configure_bin_btn = QPushButton("Save Config")
         setup_row.addWidget(self.check_setup_btn)
+        setup_row.addWidget(self.auto_detect_btn)
         setup_row.addWidget(self.configure_bin_btn)
         layout.addLayout(setup_row)
 
@@ -159,9 +182,13 @@ class CodexDocker(DockWidget):
         self.script_btn.clicked.connect(self.propose_script)
         self.run_script_btn.clicked.connect(self.run_script)
         self.check_setup_btn.clicked.connect(self.check_setup)
-        self.configure_bin_btn.clicked.connect(self.configure_codex_bin)
+        self.auto_detect_btn.clicked.connect(self.auto_detect_setup)
+        self.configure_bin_btn.clicked.connect(self.save_setup_config)
+        self.browse_sdk_btn.clicked.connect(self.browse_sdk_dir)
+        self.browse_codex_bin_btn.clicked.connect(self.browse_codex_bin)
 
         self.setWidget(root)
+        self.load_setup_fields()
         self.refresh_context()
 
     def refresh_context(self):
@@ -243,13 +270,52 @@ class CodexDocker(DockWidget):
         self.log.append(text)
 
     def check_setup(self):
-        self.append_log(setup_status_text())
-
-    def configure_codex_bin(self):
+        self.append_log("Checking Codex setup...")
         try:
             info = diagnostics()
-            message = save_detected_config(info["codex_bin"])
+            if not info["sdk_available"]:
+                self.append_log("Codex SDK missing. Installing SDK into the plugin data directory...")
+                self.append_log(ensure_managed_sdk_installed())
+                self.load_setup_fields()
+            self.append_log(setup_status_text())
+        except Exception as exc:
+            self.append_log("Setup error: %s" % exc)
+
+    def load_setup_fields(self):
+        info = diagnostics()
+        self.sdk_dir_input.setText(info.get("vendor_sdk") or info.get("detected_sdk") or "")
+        self.codex_bin_input.setText(info.get("codex_bin") or "")
+
+    def browse_sdk_dir(self):
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Codex SDK Python Directory",
+            self.sdk_dir_input.text().strip(),
+        )
+        if path:
+            self.sdk_dir_input.setText(path)
+
+    def browse_codex_bin(self):
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select Codex Binary",
+            self.codex_bin_input.text().strip(),
+        )
+        if path:
+            self.codex_bin_input.setText(path)
+
+    def auto_detect_setup(self):
+        self.load_setup_fields()
+        self.append_log(setup_status_text())
+
+    def save_setup_config(self):
+        try:
+            message = save_config(
+                sdk_dir=self.sdk_dir_input.text().strip(),
+                codex_bin=self.codex_bin_input.text().strip(),
+            )
             self.append_log(message)
+            self.load_setup_fields()
         except Exception as exc:
             self.append_log("Setup error: %s" % exc)
 
