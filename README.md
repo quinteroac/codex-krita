@@ -31,7 +31,7 @@ codex
 
 The first `codex` run opens the authentication flow. The plugin expects that local Codex is already signed in and usable from a terminal.
 
-After importing the plugin in Krita, open `Settings > Dockers > Codex` and click `Check Setup`. If the Python SDK is missing, the plugin downloads the Codex repo archive, installs `sdk/python` into Krita's Python environment, saves the SDK path in Krita's data directory, and then prints the final setup status.
+After importing the plugin in Krita, open `Settings > Dockers > Codex` and click `Check Setup`. If the Python SDK source is missing, the plugin downloads the Codex repo archive, saves the SDK path in Krita's data directory, and then prints the final setup status.
 
 ## Package Plugin For Import
 
@@ -49,7 +49,7 @@ dist/codex_krita.zip
 
 In Krita, open `Tools > Scripts > Import Python Plugin from File`, select `dist/codex_krita.zip`, restart Krita, then enable `Codex for Krita` in the Python Plugin Manager.
 
-The ZIP contains the Krita plugin only. The target Krita environment still needs access to the local Codex binary. Open `Settings > Dockers > Codex` and click `Check Setup` to prepare the SDK and verify the Codex binary path.
+The ZIP contains the Krita plugin only. The target Krita environment still needs access to the local Codex binary. Open `Settings > Dockers > Codex` and click `Check Setup` to prepare the SDK source path and verify the Codex binary path.
 
 ## Publish GitHub Release
 
@@ -79,11 +79,11 @@ For Flatpak Krita (`org.kde.krita`), the installer targets:
 Restart Krita, enable `Codex for Krita` in the Python Plugin Manager, then open `Settings > Dockers > Codex`.
 Animation tools are available as a separate docker at `Settings > Dockers > Codex Animation` and from `Tools > Scripts > Codex Animation`.
 
-In the docker, use `Check Setup` first. It prepares the SDK if needed and reports any missing Codex binary configuration.
+In the docker, use `Check Setup` first. It prepares the SDK source path if needed and reports any missing Codex binary configuration.
 
 ## Optional Flatpak Helper
 
-`Check Setup` can prepare the SDK from inside the plugin. For development installs of Flatpak Krita, this helper does the same preparation from a terminal:
+`Check Setup` can prepare the SDK source path from inside the plugin without requiring system `python3`. For development installs of Flatpak Krita, this helper does similar preparation from a terminal:
 
 ```bash
 ./scripts/install_flatpak_deps.sh

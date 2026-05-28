@@ -274,7 +274,7 @@ class CodexDocker(DockWidget):
         try:
             info = diagnostics()
             if not info["sdk_available"]:
-                self.append_log("Codex SDK missing. Installing SDK into the plugin data directory...")
+                self.append_log("Codex SDK missing. Downloading SDK source into the plugin data directory...")
                 self.append_log(ensure_managed_sdk_installed())
                 self.load_setup_fields()
             self.append_log(setup_status_text())

@@ -4,7 +4,6 @@ import json
 import os
 import sys
 import shutil
-import subprocess
 import tempfile
 import urllib.request
 import zipfile
@@ -48,6 +47,15 @@ def codex_sdk_available():
         return True
     except Exception:
         return False
+
+
+def codex_sdk_import_error():
+    ensure_vendor_sdk_on_path()
+    try:
+        importlib.import_module("openai_codex")
+        return None
+    except Exception as exc:
+        return str(exc)
 
 
 def _path_from_env(name):
@@ -130,15 +138,9 @@ def ensure_codex_runtime():
     return None
 
 
-def install_sdk_package(sdk_dir):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "-e", str(sdk_dir)])
-
-
 def ensure_managed_sdk_installed():
     detected = find_codex_sdk_dir()
     if detected:
-        if not codex_sdk_available():
-            install_sdk_package(detected)
         config = read_config()
         config["sdk_python_dir"] = str(detected)
         codex_bin = find_codex_binary()
@@ -146,7 +148,7 @@ def ensure_managed_sdk_installed():
             config["codex_bin"] = codex_bin
         write_config(config)
         ensure_vendor_sdk_on_path()
-        return "Codex SDK already available at %s" % detected
+        return "Codex SDK source available at %s" % detected
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="krita-codex-sdk-") as temp_dir:
@@ -172,7 +174,6 @@ def ensure_managed_sdk_installed():
         shutil.copytree(str(source_dir), str(MANAGED_CODEX_DIR))
 
     managed_sdk_dir = MANAGED_CODEX_DIR / "sdk" / "python"
-    install_sdk_package(managed_sdk_dir)
 
     config = read_config()
     config["sdk_python_dir"] = str(managed_sdk_dir)
@@ -181,7 +182,7 @@ def ensure_managed_sdk_installed():
         config["codex_bin"] = codex_bin
     write_config(config)
     ensure_vendor_sdk_on_path()
-    return "Installed Codex SDK at %s" % managed_sdk_dir
+    return "Installed Codex SDK source at %s" % managed_sdk_dir
 
 
 def read_config():
@@ -260,8 +261,10 @@ def diagnostics():
     codex_bin = find_codex_binary()
     node_bin = find_node_binary()
     sdk_dir = configured_sdk_dir()
+    sdk_available = codex_sdk_available()
     return {
-        "sdk_available": codex_sdk_available(),
+        "sdk_available": sdk_available,
+        "sdk_import_error": None if sdk_available else codex_sdk_import_error(),
         "vendor_sdk": str(sdk_dir) if sdk_dir.exists() else None,
         "detected_sdk": str(find_codex_sdk_dir() or ""),
         "codex_bin": codex_bin,
@@ -318,7 +321,9 @@ def setup_status_text():
             lines.append("Legacy Flatpak config: %s" % info["legacy_config_path"])
     if not info["sdk_available"]:
         lines.append("")
-        lines.append("Click Check Setup to download and install the Codex SDK into the plugin data directory.")
+        lines.append("Click Check Setup to download the Codex SDK source into the plugin data directory.")
+        if info["sdk_import_error"]:
+            lines.append("SDK import error: %s" % info["sdk_import_error"])
     if info["sdk_available"] and not info["codex_bin"]:
         lines.append("")
         lines.append("Install Codex or configure KRITA_CODEX_BIN.")
