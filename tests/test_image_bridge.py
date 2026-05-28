@@ -47,6 +47,20 @@ def load_image_bridge_module():
 
 
 class ImageBridgeTests(unittest.TestCase):
+    def test_blend_alpha_feathers_inside_selection_edge(self):
+        image_bridge = load_image_bridge_module()
+
+        self.assertEqual(image_bridge.blend_alpha(255, 0, 0, 64, 24), 0)
+        self.assertEqual(image_bridge.blend_alpha(255, 0, 12, 64, 24), 127)
+        self.assertEqual(image_bridge.blend_alpha(255, 0, 24, 64, 24), 255)
+
+    def test_blend_alpha_feathers_outside_padding_edge(self):
+        image_bridge = load_image_bridge_module()
+
+        self.assertEqual(image_bridge.blend_alpha(0, 40, 0, 64, 24), 255)
+        self.assertEqual(image_bridge.blend_alpha(0, 52, 0, 64, 24), 127)
+        self.assertEqual(image_bridge.blend_alpha(0, 64, 0, 64, 24), 0)
+
     def test_clip_packed_to_document_clips_negative_offsets(self):
         image_bridge = load_image_bridge_module()
         packed = {

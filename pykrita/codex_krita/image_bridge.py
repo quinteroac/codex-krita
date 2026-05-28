@@ -127,13 +127,16 @@ def export_inpaint_masks(padding=64, feather=24):
 
     padding = max(0, int(padding))
     feather = max(0, int(feather))
-    distances = distance_to_selection(raw, width, height, padding)
+    outside_distances = distance_to_selection(raw, width, height, padding)
+    inverted_raw = bytes(0 if selected else 255 for selected in raw)
+    inside_distances = distance_to_selection(inverted_raw, width, height, feather)
     edit_pixels = bytearray(width * height * 4)
     blend_pixels = bytearray(width * height * 4)
 
     for index, selected in enumerate(raw):
-        distance = distances[index]
-        editable = 255 if distance <= padding else 0
+        outside_distance = outside_distances[index]
+        inside_distance = inside_distances[index]
+        editable = 255 if outside_distance <= padding else 0
         offset = index * 4
         edit_pixels[offset] = 255
         edit_pixels[offset + 1] = 255
@@ -142,7 +145,13 @@ def export_inpaint_masks(padding=64, feather=24):
         blend_pixels[offset] = 255
         blend_pixels[offset + 1] = 255
         blend_pixels[offset + 2] = 255
-        blend_pixels[offset + 3] = blend_alpha(selected, distance, padding, feather)
+        blend_pixels[offset + 3] = blend_alpha(
+            selected,
+            outside_distance,
+            inside_distance,
+            padding,
+            feather,
+        )
 
     edit = save_temp_argb32(edit_pixels, width, height, "krita-codex-edit-mask-")
     blend = save_temp_argb32(blend_pixels, width, height, "krita-codex-blend-mask-")
@@ -234,13 +243,16 @@ def export_inpaint_blend_mask_for_rect(x, y, width, height, padding=64, feather=
 def build_inpaint_masks(raw, width, height, padding=64, feather=24):
     padding = max(0, int(padding))
     feather = max(0, int(feather))
-    distances = distance_to_selection(raw, width, height, padding)
+    outside_distances = distance_to_selection(raw, width, height, padding)
+    inverted_raw = bytes(0 if selected else 255 for selected in raw)
+    inside_distances = distance_to_selection(inverted_raw, width, height, feather)
     edit_pixels = bytearray(width * height * 4)
     blend_pixels = bytearray(width * height * 4)
 
     for index, selected in enumerate(raw):
-        distance = distances[index]
-        editable = 255 if distance <= padding else 0
+        outside_distance = outside_distances[index]
+        inside_distance = inside_distances[index]
+        editable = 255 if outside_distance <= padding else 0
         offset = index * 4
         edit_pixels[offset] = 255
         edit_pixels[offset + 1] = 255
@@ -249,7 +261,13 @@ def build_inpaint_masks(raw, width, height, padding=64, feather=24):
         blend_pixels[offset] = 255
         blend_pixels[offset + 1] = 255
         blend_pixels[offset + 2] = 255
-        blend_pixels[offset + 3] = blend_alpha(selected, distance, padding, feather)
+        blend_pixels[offset + 3] = blend_alpha(
+            selected,
+            outside_distance,
+            inside_distance,
+            padding,
+            feather,
+        )
 
     edit = save_temp_argb32(edit_pixels, width, height, "krita-codex-edit-mask-")
     blend = save_temp_argb32(blend_pixels, width, height, "krita-codex-blend-mask-")
@@ -343,18 +361,20 @@ def distance_to_selection(raw, width, height, max_distance):
     return distances
 
 
-def blend_alpha(selected, distance, padding, feather):
+def blend_alpha(selected, outside_distance, inside_distance, padding, feather):
     if selected:
-        return 255
-    if padding <= 0 or distance > padding:
+        if feather <= 0:
+            return 255
+        return max(0, min(255, int(255 * (inside_distance / float(feather)))))
+    if padding <= 0 or outside_distance > padding:
         return 0
     if feather <= 0:
         return 255
 
     solid_distance = max(0, padding - feather)
-    if distance <= solid_distance:
+    if outside_distance <= solid_distance:
         return 255
-    return max(0, min(255, int(255 * ((padding - distance) / float(feather)))))
+    return max(0, min(255, int(255 * ((padding - outside_distance) / float(feather)))))
 
 
 def save_temp_png(image, prefix):
